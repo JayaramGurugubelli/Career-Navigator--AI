@@ -11,6 +11,7 @@ import java.util.List;
 public interface ResumeUploadService {
 
     ResumeUploadResponse uploadResume(
+            Long resumeId,
             MultipartFile file
     );
 
@@ -24,18 +25,19 @@ public interface ResumeUploadService {
             UpdateResumeUploadRequest request
     );
 
-    ResumeUploadResponse getResumeById(
-            Long uploadId
-    );
+    ResumeUploadResponse getResumeById(Long uploadId);
 
     List<ResumeUploadResponse> getAllResumes();
 
-    Resource downloadResume(
-            Long uploadId
-    );
+    Resource downloadResume(Long uploadId);
 
-    void deleteResume(
-            Long uploadId
-    );
+    void deleteResume(Long uploadId);
+
     ResumeUpload getActiveResume(Long studentId);
+
+    ResumeUpload getActiveResume(
+            Long studentId,
+            Long resumeId
+    );
+    public void deleteScan(Long scanId);
 }

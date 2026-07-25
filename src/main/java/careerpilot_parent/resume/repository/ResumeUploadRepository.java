@@ -1,6 +1,5 @@
 package careerpilot_parent.resume.repository;
 
-
 import careerpilot_parent.resume.entity.ResumeUpload;
 import org.springframework.data.jpa.repository.JpaRepository;
 
@@ -19,13 +18,20 @@ public interface ResumeUploadRepository
             Long studentId
     );
 
-    Optional<ResumeUpload> findByStudentIdAndActiveTrue(
+    Optional<ResumeUpload>
+    findFirstByStudentIdAndActiveTrueOrderByVersionDesc(
             Long studentId
     );
 
-    boolean existsByStoredFileName(
-            String storedFileName
+    List<ResumeUpload>
+    findByStudentIdAndResumeIdOrderByVersionDesc(
+            Long studentId,
+            Long resumeId
     );
 
-
+    Optional<ResumeUpload>
+    findFirstByStudentIdAndResumeIdAndActiveTrueOrderByVersionDesc(
+            Long studentId,
+            Long resumeId
+    );
 }

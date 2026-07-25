@@ -1,15 +1,17 @@
 package careerpilot_parent.ats.entity;
 
-
 import careerpilot_parent.resume.entity.Resume;
 import careerpilot_parent.student.entity.Student;
 
 import jakarta.persistence.*;
 
-import lombok.*;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
 
 import java.time.LocalDateTime;
-
 
 @Entity
 @Table(name = "ats_scan_results")
@@ -20,96 +22,74 @@ import java.time.LocalDateTime;
 @Builder
 public class AtsScanResult {
 
-
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-
-
-    /*
-        Student who performed ATS scan
-     */
-    @ManyToOne(fetch = FetchType.LAZY)
+    @ManyToOne(
+            fetch = FetchType.LAZY,
+            optional = false
+    )
     @JoinColumn(
             name = "student_id",
-            nullable = false
+            nullable = false,
+            foreignKey = @ForeignKey(
+                    name = "fk_ats_scan_student"
+            )
     )
     private Student student;
 
-
-
-    /*
-        Resume which is analyzed
-     */
-    @ManyToOne(fetch = FetchType.LAZY)
+    @ManyToOne(
+            fetch = FetchType.LAZY,
+            optional = false
+    )
     @JoinColumn(
             name = "resume_id",
-            nullable = false
+            nullable = false,
+            foreignKey = @ForeignKey(
+                    name = "fk_ats_scan_resume"
+            )
     )
     private Resume resume;
 
-
-
-    /*
-        Target job information
-     */
-    @Column(nullable = false)
+    @Column(
+            nullable = false,
+            length = 150
+    )
     private String jobTitle;
 
-
-
-    @Column(nullable = false)
+    @Column(length = 150)
     private String companyName;
 
-
-
     @Column(
-            columnDefinition = "TEXT",
-            nullable = false
+            nullable = false,
+            columnDefinition = "TEXT"
     )
     private String jobDescription;
 
-
-
-    /*
-        ATS Result
-     */
     @Column(nullable = false)
-    private Integer atsScore;
+    private Double atsScore;
 
-
-
-    @Column(
-            columnDefinition = "TEXT"
-    )
+    @Column(columnDefinition = "TEXT")
     private String matchedSkills;
 
-
-
-    @Column(
-            columnDefinition = "TEXT"
-    )
+    @Column(columnDefinition = "TEXT")
     private String missingSkills;
 
-
-
-    @Column(
-            columnDefinition = "TEXT"
-    )
+    @Column(columnDefinition = "TEXT")
     private String suggestions;
 
-
-
+    @Column(
+            nullable = false,
+            updatable = false
+    )
     private LocalDateTime createdAt;
 
-
-
     @PrePersist
-    public void onCreate(){
+    public void onCreate() {
 
-        createdAt = LocalDateTime.now();
-
+        if (createdAt == null) {
+            createdAt = LocalDateTime.now();
+        }
     }
-
 }

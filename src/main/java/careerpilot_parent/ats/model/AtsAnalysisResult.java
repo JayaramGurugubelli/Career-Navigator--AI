@@ -1,7 +1,12 @@
 package careerpilot_parent.ats.model;
 
-import lombok.*;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
 
+import java.util.ArrayList;
 import java.util.List;
 
 @Getter
@@ -13,10 +18,15 @@ public class AtsAnalysisResult {
 
     private Double atsScore;
 
-    private List<String> matchedSkills;
+    @Builder.Default
+    private List<String> matchedSkills =
+            new ArrayList<>();
 
-    private List<String> missingSkills;
+    @Builder.Default
+    private List<String> missingSkills =
+            new ArrayList<>();
 
-    private List<String> extraSkills;
-
+    @Builder.Default
+    private List<String> extraSkills =
+            new ArrayList<>();
 }

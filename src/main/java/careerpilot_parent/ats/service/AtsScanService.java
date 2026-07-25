@@ -11,9 +11,7 @@ import java.util.List;
 public interface AtsScanService {
 
 
-    AtsScanResponse createScan(
-            CreateAtsScanRequest request
-    );
+    AtsScanResponse createScan(CreateAtsScanRequest request);
 
 
     List<AtsScanResponse> getMyScans();
@@ -22,6 +20,6 @@ public interface AtsScanService {
     AtsScanResponse getScanById(
             Long scanId
     );
-
+    void deleteScan(Long scanId);
 
 }
