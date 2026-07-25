@@ -2,25 +2,41 @@ package careerpilot_parent.auth.service;
 
 import careerpilot_parent.auth.dto.request.ForgotPasswordRequest;
 import careerpilot_parent.auth.dto.request.LoginRequest;
-import careerpilot_parent.auth.dto.request.LogoutRequest;
+import careerpilot_parent.auth.dto.request.RecruiterRegisterRequest;
 import careerpilot_parent.auth.dto.request.RegisterRequest;
 import careerpilot_parent.auth.dto.request.ResetPasswordRequest;
 import careerpilot_parent.auth.dto.request.VerifyEmailRequest;
+
 import careerpilot_parent.auth.dto.response.LoginResponse;
 import careerpilot_parent.auth.dto.response.RegisterResponse;
 
 public interface AuthService {
 
-    RegisterResponse register(RegisterRequest request);
+    RegisterResponse register(
+            RegisterRequest request
+    );
 
-    LoginResponse login(LoginRequest request);
+    RegisterResponse registerRecruiter(
+            RecruiterRegisterRequest request
+    );
 
-    void logout(String refreshToken);
+    LoginResponse login(
+            LoginRequest request
+    );
 
-    void verifyEmail(VerifyEmailRequest request);
+    void logout(
+            String refreshToken
+    );
 
-    void forgotPassword(ForgotPasswordRequest request);
+    void verifyEmail(
+            VerifyEmailRequest request
+    );
 
-    void resetPassword(ResetPasswordRequest request);
+    void forgotPassword(
+            ForgotPasswordRequest request
+    );
 
+    void resetPassword(
+            ResetPasswordRequest request
+    );
 }

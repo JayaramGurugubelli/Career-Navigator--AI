@@ -1,9 +1,15 @@
 package careerpilot_parent.student.dto.response;
 
-import careerpilot_parent.student.enums.EmploymentType;
-import lombok.*;
+import careerpilot_parent.company.enums.EmploymentType;
+
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 
 @Getter
 @Setter
@@ -13,6 +19,8 @@ import java.time.LocalDate;
 public class StudentExperienceResponse {
 
     private Long id;
+
+    private Long studentId;
 
     private String companyName;
 
@@ -31,4 +39,8 @@ public class StudentExperienceResponse {
     private String technologies;
 
     private String description;
+
+    private LocalDateTime createdAt;
+
+    private LocalDateTime updatedAt;
 }

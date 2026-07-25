@@ -4,8 +4,11 @@ public enum ProjectType {
 
     ACADEMIC,
     PERSONAL,
-    FREELANCE,
     INTERNSHIP,
-    OPEN_SOURCE
-
+    FREELANCE,
+    OPEN_SOURCE,
+    PROFESSIONAL,
+    RESEARCH,
+    HACKATHON,
+    OTHER
 }

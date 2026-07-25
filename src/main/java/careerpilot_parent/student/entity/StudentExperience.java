@@ -1,12 +1,24 @@
 package careerpilot_parent.student.entity;
 
 import careerpilot_parent.common.entity.BaseEntity;
-import careerpilot_parent.student.enums.EmploymentType;
-import jakarta.persistence.*;
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Size;
-import lombok.*;
+
+import careerpilot_parent.company.enums.EmploymentType;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.ForeignKey;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
+import jakarta.persistence.Table;
+
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
 
 import java.time.LocalDate;
 
@@ -19,49 +31,67 @@ import java.time.LocalDate;
 @Builder
 public class StudentExperience extends BaseEntity {
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @ManyToOne(
+            fetch = FetchType.LAZY,
+            optional = false
+    )
     @JoinColumn(
             name = "student_id",
             nullable = false,
-            foreignKey = @ForeignKey(name = "fk_student_experience_student")
+            foreignKey = @ForeignKey(
+                    name = "fk_student_experience_student"
+            )
     )
     private Student student;
 
-    @NotBlank
-    @Size(max = 150)
-    @Column(name = "company_name", nullable = false, length = 150)
+    @Column(
+            name = "company_name",
+            nullable = false,
+            length = 150
+    )
     private String companyName;
 
-    @NotBlank
-    @Size(max = 120)
-    @Column(name = "job_title", nullable = false, length = 120)
+    @Column(
+            name = "job_title",
+            nullable = false,
+            length = 150
+    )
     private String jobTitle;
 
-    @NotNull
     @Enumerated(EnumType.STRING)
-    @Column(name = "employment_type", nullable = false)
+    @Column(
+            name = "employment_type",
+            nullable = false,
+            length = 30
+    )
     private EmploymentType employmentType;
 
-    @Size(max = 120)
-    @Column(length = 120)
+    @Column(length = 150)
     private String location;
 
-    @NotNull
-    @Column(name = "currently_working", nullable = false)
-    private Boolean currentlyWorking;
+    @Column(
+            name = "currently_working",
+            nullable = false
+    )
+    @Builder.Default
+    private Boolean currentlyWorking = false;
 
-    @NotNull
-    @Column(name = "start_date", nullable = false)
+    @Column(
+            name = "start_date",
+            nullable = false
+    )
     private LocalDate startDate;
 
     @Column(name = "end_date")
     private LocalDate endDate;
 
-    @Size(max = 500)
-    @Column(length = 500)
+    @Column(
+            columnDefinition = "TEXT"
+    )
     private String technologies;
 
-    @Size(max = 2000)
-    @Column(length = 2000)
+    @Column(
+            columnDefinition = "TEXT"
+    )
     private String description;
 }

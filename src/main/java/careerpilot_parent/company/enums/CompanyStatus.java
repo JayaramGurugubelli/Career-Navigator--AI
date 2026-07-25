@@ -1,0 +1,7 @@
+package careerpilot_parent.company.enums;
+
+public enum CompanyStatus {
+    ACTIVE,
+    INACTIVE,
+    SUSPENDED
+}
