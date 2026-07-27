@@ -115,7 +115,7 @@ public class JobPosting extends BaseEntity {
 
     @Column(
             nullable = false,
-            unique = true,
+
             length = 250
     )
     private String slug;

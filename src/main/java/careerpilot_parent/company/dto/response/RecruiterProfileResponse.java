@@ -13,6 +13,12 @@ public class RecruiterProfileResponse {
 
     private Long userId;
 
+    private String recruiterName;
+
+    private Long companyId;
+
+    private String companyName;
+
     private String designation;
 
     private String officialEmail;
@@ -24,6 +30,4 @@ public class RecruiterProfileResponse {
     private boolean verified;
 
     private boolean active;
-
-    private CompanyResponse company;
 }

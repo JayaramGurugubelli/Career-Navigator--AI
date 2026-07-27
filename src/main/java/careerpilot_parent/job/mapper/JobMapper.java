@@ -18,6 +18,7 @@ import careerpilot_parent.job.dto.response.JobApplicationResponse;
 import careerpilot_parent.job.entity.JobApplication;
 import careerpilot_parent.job.entity.JobPosting;
 
+import careerpilot_parent.user.entity.User;
 import org.springframework.stereotype.Component;
 
 import java.util.HashSet;
@@ -115,29 +116,27 @@ public class JobMapper {
                                 ? null
                                 : recruiter.getUser().getId()
                 )
-                .designation(
-                        recruiter.getDesignation()
-                )
-                .officialEmail(
-                        recruiter.getOfficialEmail()
-                )
-                .phoneNumber(
-                        recruiter.getPhoneNumber()
-                )
-                .linkedinUrl(
-                        recruiter.getLinkedinUrl()
-                )
-                .verified(
-                        recruiter.isVerified()
-                )
-                .active(
-                        recruiter.isActive()
-                )
-                .company(
-                        toCompanyResponse(
-                                recruiter.getCompany()
+                .recruiterName(
+                        buildRecruiterName(
+                                recruiter.getUser()
                         )
                 )
+                .companyId(
+                        recruiter.getCompany() == null
+                                ? null
+                                : recruiter.getCompany().getId()
+                )
+                .companyName(
+                        recruiter.getCompany() == null
+                                ? null
+                                : recruiter.getCompany().getName()
+                )
+                .designation(recruiter.getDesignation())
+                .officialEmail(recruiter.getOfficialEmail())
+                .phoneNumber(recruiter.getPhoneNumber())
+                .linkedinUrl(recruiter.getLinkedinUrl())
+                .verified(recruiter.isVerified())
+                .active(recruiter.isActive())
                 .build();
     }
 
@@ -484,6 +483,9 @@ public class JobMapper {
                         application.getCoverLetter()
                 )
                 .status(application.getStatus())
+                .recruiterNotes(
+                        application.getRecruiterNotes()
+                )
                 .appliedAt(application.getAppliedAt())
                 .lastStatusChangedAt(
                         application
@@ -532,5 +534,34 @@ public class JobMapper {
                 )
                 .map(String::trim)
                 .collect(Collectors.toSet());
+    }
+
+    private String buildRecruiterName(
+            User user
+    ) {
+
+        if (user == null) {
+            return null;
+        }
+
+        String firstName =
+                normalizeOptionalText(
+                        user.getFirstName()
+                );
+
+        String lastName =
+                normalizeOptionalText(
+                        user.getLastName()
+                );
+
+        if (firstName == null) {
+            return lastName;
+        }
+
+        if (lastName == null) {
+            return firstName;
+        }
+
+        return firstName + " " + lastName;
     }
 }

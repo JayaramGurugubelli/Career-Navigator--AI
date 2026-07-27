@@ -54,4 +54,16 @@ public interface JobApplicationRepository
             ApplicationStatus status,
             Pageable pageable
     );
+    Page<JobApplication> findByJobPostingId(
+            Long jobPostingId,
+            Pageable pageable
+    );
+
+    Page<JobApplication> findByJobPostingIdAndStatus(
+            Long jobPostingId,
+            ApplicationStatus status,
+            Pageable pageable
+    );
+
+
 }

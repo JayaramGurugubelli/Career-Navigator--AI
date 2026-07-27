@@ -1,21 +1,15 @@
 package careerpilot_parent.job.controller;
 
-
 import careerpilot_parent.company.dto.response.JobPostingResponse;
+import careerpilot_parent.company.enums.EmploymentType;
 import careerpilot_parent.company.enums.ExperienceLevel;
-import careerpilot_parent.job.enums.EmploymentType;
 import careerpilot_parent.company.enums.WorkMode;
 import careerpilot_parent.job.service.PublicJobService;
-
 import lombok.RequiredArgsConstructor;
-
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
-
 import org.springframework.data.web.PageableDefault;
-
 import org.springframework.http.ResponseEntity;
-
 import org.springframework.web.bind.annotation.*;
 
 import static org.springframework.data.domain.Sort.Direction.DESC;
