@@ -23,4 +23,5 @@ public interface RecruiterProfileRepository
     boolean existsByOfficialEmailIgnoreCase(
             String officialEmail
     );
+    
 }

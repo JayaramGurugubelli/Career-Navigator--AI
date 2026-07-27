@@ -355,4 +355,54 @@ public class GlobalExceptionHandler {
                 .status(HttpStatus.UNSUPPORTED_MEDIA_TYPE)
                 .body(errorResponse);
     }
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<ApiErrorResponse>
+    handleIllegalArgumentException(
+            IllegalArgumentException exception,
+            HttpServletRequest request
+    ) {
+
+        ApiErrorResponse response =
+                ApiErrorResponse.builder()
+                        .timestamp(LocalDateTime.now())
+                        .status(
+                                HttpStatus.BAD_REQUEST.value()
+                        )
+                        .error(
+                                HttpStatus.BAD_REQUEST
+                                        .getReasonPhrase()
+                        )
+                        .message(exception.getMessage())
+                        .path(request.getRequestURI())
+                        .build();
+
+        return ResponseEntity
+                .badRequest()
+                .body(response);
+    }
+    @ExceptionHandler(IllegalStateException.class)
+    public ResponseEntity<ApiErrorResponse>
+    handleIllegalStateException(
+            IllegalStateException exception,
+            HttpServletRequest request
+    ) {
+
+        ApiErrorResponse response =
+                ApiErrorResponse.builder()
+                        .timestamp(LocalDateTime.now())
+                        .status(
+                                HttpStatus.CONFLICT.value()
+                        )
+                        .error(
+                                HttpStatus.CONFLICT
+                                        .getReasonPhrase()
+                        )
+                        .message(exception.getMessage())
+                        .path(request.getRequestURI())
+                        .build();
+
+        return ResponseEntity
+                .status(HttpStatus.CONFLICT)
+                .body(response);
+    }
 }
