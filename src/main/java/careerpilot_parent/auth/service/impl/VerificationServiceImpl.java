@@ -1,6 +1,9 @@
 package careerpilot_parent.auth.service.impl;
 
 
+import careerpilot_parent.audit.annotation.Auditable;
+import careerpilot_parent.audit.enums.AuditAction;
+import careerpilot_parent.audit.enums.AuditEntityType;
 import careerpilot_parent.auth.entity.PasswordResetToken;
 import careerpilot_parent.auth.entity.VerificationToken;
 import careerpilot_parent.auth.exception.EmailAlreadyVerifiedException;
@@ -86,6 +89,14 @@ public class VerificationServiceImpl implements VerificationService {
 
 
     @Override
+    @Transactional
+    @Auditable(
+            action = AuditAction.EMAIL_VERIFIED,
+            entityType = AuditEntityType.AUTHENTICATION,
+            description = "User email was verified",
+            captureArguments = false,
+            captureResponse = false
+    )
     public void verifyEmail(String token){
 
 
@@ -149,6 +160,14 @@ public class VerificationServiceImpl implements VerificationService {
 
 
     @Override
+    @Transactional
+    @Auditable(
+            action = AuditAction.VERIFICATION_EMAIL_RESENT,
+            entityType = AuditEntityType.AUTHENTICATION,
+            description = "Email verification link was resent",
+            captureArguments = false,
+            captureResponse = false
+    )
     public void resendVerificationToken(String email){
         User user =
                 userRepository.findByEmail(email)

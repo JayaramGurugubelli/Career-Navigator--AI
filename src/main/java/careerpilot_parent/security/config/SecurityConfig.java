@@ -1,36 +1,25 @@
 package careerpilot_parent.security.config;
-
 import careerpilot_parent.security.filter.JwtAuthenticationFilter;
 import careerpilot_parent.security.handler.JwtAccessDeniedHandler;
 import careerpilot_parent.security.handler.JwtAuthenticationEntryPoint;
 import careerpilot_parent.security.service.CustomUserDetailsService;
-
 import lombok.RequiredArgsConstructor;
-
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-
 import org.springframework.http.HttpMethod;
-
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
-
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
-
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
-
 import org.springframework.security.config.http.SessionCreationPolicy;
-
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
-
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
-
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -170,11 +159,41 @@ public class SecurityConfig {
                                 .permitAll()
 
                                 /*
+                                 * WebSocket and SockJS handshake endpoints.
+                                 *
+                                 * Authentication for STOMP messages can later
+                                 * be handled through a ChannelInterceptor.
+                                 */
+                                .requestMatchers(
+                                        "/ws",
+                                        "/ws/**"
+                                )
+                                .permitAll()
+
+                                /*
                                  * Public job-search endpoints
                                  */
                                 .requestMatchers(
                                         HttpMethod.GET,
                                         "/api/jobs/**"
+                                )
+                                .permitAll()
+
+                                /*
+                                 * Public interview experience endpoints.
+                                 *
+                                 * This allows:
+                                 * GET /api/interview-experiences
+                                 * GET /api/interview-experiences/{id}
+                                 * GET /api/interview-experiences/{id}/comments
+                                 * GET /api/interview-experiences/{id}/comments/{commentId}/replies
+                                 *
+                                 * Protected methods such as /my and like/state
+                                 * remain protected by @PreAuthorize.
+                                 */
+                                .requestMatchers(
+                                        HttpMethod.GET,
+                                        "/api/interview-experiences/**"
                                 )
                                 .permitAll()
 
@@ -218,7 +237,7 @@ public class SecurityConfig {
     }
 
     /**
-     * Angular frontend CORS configuration.
+     * Angular frontend and WebSocket CORS configuration.
      */
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
@@ -249,7 +268,9 @@ public class SecurityConfig {
                         "Content-Type",
                         "Accept",
                         "Origin",
-                        "X-Requested-With"
+                        "X-Requested-With",
+                        "Cache-Control",
+                        "Pragma"
                 )
         );
 

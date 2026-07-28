@@ -1,5 +1,8 @@
 package careerpilot_parent.auth.service.impl;
 
+import careerpilot_parent.audit.annotation.Auditable;
+import careerpilot_parent.audit.enums.AuditAction;
+import careerpilot_parent.audit.enums.AuditEntityType;
 import careerpilot_parent.auth.dto.request.ForgotPasswordRequest;
 import careerpilot_parent.auth.dto.request.LoginRequest;
 import careerpilot_parent.auth.dto.request.RecruiterRegisterRequest;
@@ -96,9 +99,14 @@ public class AuthServiceImpl implements AuthService {
      */
     @Override
     @Transactional
-    public RegisterResponse register(
-            RegisterRequest request
-    ) {
+    @Auditable(
+            action = AuditAction.REGISTER,
+            entityType = AuditEntityType.USER,
+            description = "Student registered a new account",
+            captureArguments = false,
+            captureResponse = false
+    )
+    public RegisterResponse register(RegisterRequest request) {
 
         String normalizedEmail =
                 normalizeEmail(request.getEmail());
@@ -157,9 +165,14 @@ public class AuthServiceImpl implements AuthService {
      */
     @Override
     @Transactional
-    public RegisterResponse registerRecruiter(
-            RecruiterRegisterRequest request
-    ) {
+    @Auditable(
+            action = AuditAction.REGISTER,
+            entityType = AuditEntityType.RECRUITER,
+            description = "Recruiter registered a new account",
+            captureArguments = false,
+            captureResponse = false
+    )
+    public RegisterResponse registerRecruiter(RecruiterRegisterRequest request) {
 
         String normalizedEmail =
                 normalizeEmail(request.getEmail());
@@ -201,11 +214,7 @@ public class AuthServiceImpl implements AuthService {
      *
      * Future roles can reuse this method.
      */
-    private User createUserWithRole(
-            User user,
-            String rawPassword,
-            RoleName roleName
-    ) {
+    private User createUserWithRole(User user, String rawPassword, RoleName roleName) {
 
         prepareNewUser(
                 user,
@@ -232,10 +241,7 @@ public class AuthServiceImpl implements AuthService {
         return savedUser;
     }
 
-    private void prepareNewUser(
-            User user,
-            String rawPassword
-    ) {
+    private void prepareNewUser(User user, String rawPassword) {
 
         user.setPassword(
                 passwordEncoder.encode(
@@ -252,10 +258,7 @@ public class AuthServiceImpl implements AuthService {
         );
     }
 
-    private void assignRole(
-            User user,
-            RoleName roleName
-    ) {
+    private void assignRole(User user, RoleName roleName) {
 
         Role role =
                 roleRepository
@@ -277,9 +280,7 @@ public class AuthServiceImpl implements AuthService {
         userRoleRepository.save(userRole);
     }
 
-    private void createUserProfile(
-            User user
-    ) {
+    private void createUserProfile(User user) {
 
         UserProfile userProfile =
                 UserProfile.builder()
@@ -329,6 +330,14 @@ public class AuthServiceImpl implements AuthService {
      * Login
      */
     @Override
+    @Transactional
+    @Auditable(
+            action = AuditAction.LOGIN,
+            entityType = AuditEntityType.AUTHENTICATION,
+            description = "User logged into the application",
+            captureArguments = false,
+            captureResponse = false
+    )
     public LoginResponse login(
             LoginRequest request
     ) {
@@ -441,6 +450,14 @@ public class AuthServiceImpl implements AuthService {
      * Logout
      */
     @Override
+    @Transactional
+    @Auditable(
+            action = AuditAction.LOGOUT,
+            entityType = AuditEntityType.AUTHENTICATION,
+            description = "User logged out of the application",
+            captureArguments = false,
+            captureResponse = false
+    )
     public void logout(
             String refreshToken
     ) {
@@ -505,6 +522,14 @@ public class AuthServiceImpl implements AuthService {
      * Forgot password
      */
     @Override
+    @Transactional
+    @Auditable(
+            action = AuditAction.PASSWORD_RESET_REQUESTED,
+            entityType = AuditEntityType.AUTHENTICATION,
+            description = "Password reset was requested",
+            captureArguments = false,
+            captureResponse = false
+    )
     public void forgotPassword(
             ForgotPasswordRequest request
     ) {
@@ -530,6 +555,13 @@ public class AuthServiceImpl implements AuthService {
      */
     @Override
     @Transactional
+    @Auditable(
+            action = AuditAction.PASSWORD_RESET,
+            entityType = AuditEntityType.AUTHENTICATION,
+            description = "User password was reset",
+            captureArguments = false,
+            captureResponse = false
+    )
     public void resetPassword(
             ResetPasswordRequest request
     ) {

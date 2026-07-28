@@ -1,4 +1,7 @@
 package careerpilot_parent.auth.service.impl;
+import careerpilot_parent.audit.annotation.Auditable;
+import careerpilot_parent.audit.enums.AuditAction;
+import careerpilot_parent.audit.enums.AuditEntityType;
 import careerpilot_parent.auth.dto.response.RefreshTokenResponse;
 import careerpilot_parent.auth.entity.RefreshToken;
 import careerpilot_parent.auth.repository.RefreshTokenRepository;
@@ -102,6 +105,14 @@ public class RefreshTokenServiceImpl implements RefreshTokenService {
      * Generate New Access Token
      */
     @Override
+    @Transactional
+    @Auditable(
+            action = AuditAction.TOKEN_REFRESHED,
+            entityType = AuditEntityType.AUTHENTICATION,
+            description = "User access token was refreshed",
+            captureArguments = false,
+            captureResponse = false
+    )
     public RefreshTokenResponse refreshAccessToken(String token) {
         RefreshToken refreshToken = getByToken(token);
         verifyExpiration(refreshToken);

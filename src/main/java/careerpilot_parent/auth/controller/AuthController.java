@@ -44,7 +44,7 @@ public class AuthController {
     private final RefreshTokenService refreshTokenService;
 
     /*
-     * Student registration
+     * Register a student account.
      */
     @PostMapping("/register")
     public ResponseEntity<RegisterResponse> register(
@@ -62,7 +62,7 @@ public class AuthController {
     }
 
     /*
-     * Recruiter registration
+     * Register a recruiter account.
      */
     @PostMapping("/recruiter/register")
     public ResponseEntity<RegisterResponse> registerRecruiter(
@@ -80,8 +80,7 @@ public class AuthController {
     }
 
     /*
-     * Login for all users:
-     * STUDENT, RECRUITER and ADMIN
+     * Login for STUDENT, RECRUITER and ADMIN.
      */
     @PostMapping("/login")
     public ResponseEntity<LoginResponse> login(
@@ -97,10 +96,10 @@ public class AuthController {
     }
 
     /*
-     * Logout using refresh token
+     * Logout using a refresh token.
      */
     @PostMapping("/logout")
-    public ResponseEntity<String> logout(
+    public ResponseEntity<MessageResponse> logout(
             @Valid
             @RequestBody
             LogoutRequest request
@@ -111,15 +110,17 @@ public class AuthController {
         );
 
         return ResponseEntity.ok(
-                "Logout successful"
+                new MessageResponse(
+                        "Logout successful"
+                )
         );
     }
 
     /*
-     * Verify email by JSON request body.
+     * Verify email using a JSON request body.
      */
     @PostMapping("/verify-email")
-    public ResponseEntity<String> verifyEmail(
+    public ResponseEntity<MessageResponse> verifyEmail(
             @Valid
             @RequestBody
             VerifyEmailRequest request
@@ -130,18 +131,20 @@ public class AuthController {
         );
 
         return ResponseEntity.ok(
-                "Email verified successfully"
+                new MessageResponse(
+                        "Email verified successfully"
+                )
         );
     }
 
     /*
-     * Verify email by link sent to email.
+     * Verify email using the link sent by email.
      *
      * Example:
      * GET /api/auth/verify-email-link?token=abc
      */
     @GetMapping("/verify-email-link")
-    public ResponseEntity<String> verifyEmailFromLink(
+    public ResponseEntity<MessageResponse> verifyEmailFromLink(
             @RequestParam
             String token
     ) {
@@ -149,15 +152,17 @@ public class AuthController {
         verificationService.verifyEmail(token);
 
         return ResponseEntity.ok(
-                "Email verified successfully"
+                new MessageResponse(
+                        "Email verified successfully"
+                )
         );
     }
 
     /*
-     * Resend verification email
+     * Resend an email verification link.
      */
     @PostMapping("/resend-verification")
-    public ResponseEntity<String> resendVerification(
+    public ResponseEntity<MessageResponse> resendVerification(
             @Valid
             @RequestBody
             ResendVerificationRequest request
@@ -168,12 +173,14 @@ public class AuthController {
         );
 
         return ResponseEntity.ok(
-                "Verification email sent successfully"
+                new MessageResponse(
+                        "Verification email sent successfully"
+                )
         );
     }
 
     /*
-     * Refresh access token
+     * Generate a new access token using a refresh token.
      */
     @PostMapping("/refresh-token")
     public ResponseEntity<RefreshTokenResponse> refreshToken(
@@ -191,10 +198,10 @@ public class AuthController {
     }
 
     /*
-     * Send password-reset email
+     * Send password-reset instructions.
      */
     @PostMapping("/forgot-password")
-    public ResponseEntity<String> forgotPassword(
+    public ResponseEntity<MessageResponse> forgotPassword(
             @Valid
             @RequestBody
             ForgotPasswordRequest request
@@ -203,15 +210,18 @@ public class AuthController {
         authService.forgotPassword(request);
 
         return ResponseEntity.ok(
-                "Password reset link sent successfully"
+                new MessageResponse(
+                        "If an account exists for the supplied email, "
+                                + "password-reset instructions have been sent."
+                )
         );
     }
 
     /*
-     * Reset password
+     * Reset password using a password-reset token.
      */
     @PostMapping("/reset-password")
-    public ResponseEntity<String> resetPassword(
+    public ResponseEntity<MessageResponse> resetPassword(
             @Valid
             @RequestBody
             ResetPasswordRequest request
@@ -220,7 +230,14 @@ public class AuthController {
         authService.resetPassword(request);
 
         return ResponseEntity.ok(
-                "Password reset successfully"
+                new MessageResponse(
+                        "Password reset successfully"
+                )
         );
+    }
+
+    public record MessageResponse(
+            String message
+    ) {
     }
 }
