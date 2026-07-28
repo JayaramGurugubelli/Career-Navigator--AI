@@ -2,10 +2,8 @@ package careerpilot_parent.company.repository;
 
 import careerpilot_parent.company.entity.Company;
 import careerpilot_parent.company.enums.CompanyStatus;
-
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
-
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
@@ -35,6 +33,22 @@ public interface CompanyRepository
             CompanyStatus status
     );
 
+    long countByStatus(
+            CompanyStatus status
+    );
+
+    /*
+     * verified = true means the company was approved
+     * by the administrator.
+     */
+    long countByVerifiedTrue();
+
+    /*
+     * verified = false means admin verification
+     * is still pending.
+     */
+    long countByVerifiedFalse();
+
     @Query("""
             SELECT c
             FROM Company c
@@ -42,8 +56,7 @@ public interface CompanyRepository
             WHERE c.owner.id = :ownerId
             """)
     Optional<Company> findByOwnerIdWithOwner(
-            @Param("ownerId")
-            Long ownerId
+            @Param("ownerId") Long ownerId
     );
 
     @Query("""
@@ -53,7 +66,6 @@ public interface CompanyRepository
             WHERE c.id = :companyId
             """)
     Optional<Company> findByIdWithOwner(
-            @Param("companyId")
-            Long companyId
+            @Param("companyId") Long companyId
     );
 }

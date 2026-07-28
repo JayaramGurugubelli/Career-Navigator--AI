@@ -1,12 +1,11 @@
 package careerpilot_parent.job.controller;
 
-import careerpilot_parent.company.enums.ApplicationStatus;
-
 import careerpilot_parent.job.dto.request.CreateJobApplicationRequest;
 import careerpilot_parent.job.dto.request.WithdrawJobApplicationRequest;
 import careerpilot_parent.job.dto.response.JobApplicationResponse;
 import careerpilot_parent.job.service.JobApplicationService;
 
+import careerpilot_parent.shared.enums.ApplicationStatus;
 import jakarta.validation.Valid;
 
 import lombok.RequiredArgsConstructor;

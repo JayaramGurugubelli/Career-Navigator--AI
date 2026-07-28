@@ -1,9 +1,10 @@
 package careerpilot_parent.recruiter.service;
 
-import careerpilot_parent.company.enums.ApplicationStatus;
+import careerpilot_parent.job.dto.request.UpdateApplicationStatusRequest;
 import careerpilot_parent.job.dto.request.UpdateJobApplicationStatusRequest;
 import careerpilot_parent.job.dto.request.UpdateRecruiterNotesRequest;
 import careerpilot_parent.job.dto.response.JobApplicationResponse;
+import careerpilot_parent.shared.enums.ApplicationStatus;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
@@ -28,4 +29,5 @@ public interface RecruiterJobApplicationService {
             Long applicationId,
             UpdateRecruiterNotesRequest request
     );
+
 }

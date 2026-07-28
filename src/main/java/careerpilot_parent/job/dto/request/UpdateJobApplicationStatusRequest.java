@@ -1,6 +1,6 @@
 package careerpilot_parent.job.dto.request;
 
-import careerpilot_parent.company.enums.ApplicationStatus;
+import careerpilot_parent.shared.enums.ApplicationStatus;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import lombok.*;

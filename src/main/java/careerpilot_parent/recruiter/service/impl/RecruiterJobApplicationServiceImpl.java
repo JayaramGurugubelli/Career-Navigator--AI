@@ -1,23 +1,20 @@
 package careerpilot_parent.recruiter.service.impl;
 
 import careerpilot_parent.common.exception.ResourceNotFoundException;
-import careerpilot_parent.company.enums.ApplicationStatus;
+import careerpilot_parent.company.entity.RecruiterProfile;
+import careerpilot_parent.company.repository.RecruiterProfileRepository;
 import careerpilot_parent.job.dto.request.UpdateJobApplicationStatusRequest;
 import careerpilot_parent.job.dto.request.UpdateRecruiterNotesRequest;
 import careerpilot_parent.job.dto.response.JobApplicationResponse;
-import careerpilot_parent.job.entity.ApplicationStatusHistory;
 import careerpilot_parent.job.entity.JobApplication;
 import careerpilot_parent.job.entity.JobPosting;
 import careerpilot_parent.job.mapper.JobMapper;
-import careerpilot_parent.job.repository.ApplicationStatusHistoryRepository;
 import careerpilot_parent.job.repository.JobApplicationRepository;
 import careerpilot_parent.job.repository.JobPostingRepository;
-import careerpilot_parent.company.entity.RecruiterProfile;
-import careerpilot_parent.company.repository.RecruiterProfileRepository;
+import careerpilot_parent.job.service.ApplicationStatusHistoryService;
 import careerpilot_parent.recruiter.service.RecruiterJobApplicationService;
 import careerpilot_parent.security.util.SecurityUtils;
-import careerpilot_parent.user.entity.User;
-import careerpilot_parent.user.repository.UserRepository;
+import careerpilot_parent.shared.enums.ApplicationStatus;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -31,22 +28,12 @@ import java.time.LocalDateTime;
 @Transactional
 public class RecruiterJobApplicationServiceImpl implements RecruiterJobApplicationService {
 
-    private final JobApplicationRepository
-            jobApplicationRepository;
-
-    private final JobPostingRepository
-            jobPostingRepository;
-
-    private final ApplicationStatusHistoryRepository
-            applicationStatusHistoryRepository;
-
-    private final RecruiterProfileRepository
-            recruiterProfileRepository;
-
-    private final UserRepository userRepository;
-
+    private final JobApplicationRepository jobApplicationRepository;
+    private final JobPostingRepository jobPostingRepository;
+    private final RecruiterProfileRepository recruiterProfileRepository;
+    private final ApplicationStatusHistoryService
+            applicationStatusHistoryService;
     private final JobMapper jobMapper;
-
     private final SecurityUtils securityUtils;
 
     @Override
@@ -56,38 +43,27 @@ public class RecruiterJobApplicationServiceImpl implements RecruiterJobApplicati
             ApplicationStatus status,
             Pageable pageable
     ) {
+        RecruiterProfile recruiter = getCurrentRecruiter();
 
-        RecruiterProfile recruiter =
-                getCurrentRecruiter();
-
-        JobPosting jobPosting =
-                getRecruiterJob(
-                        jobId,
-                        recruiter.getId()
-                );
-
-        Page<JobApplication> applications;
-
-        if (status == null) {
-            applications =
-                    jobApplicationRepository
-                            .findByJobPostingId(
-                                    jobPosting.getId(),
-                                    pageable
-                            );
-        } else {
-            applications =
-                    jobApplicationRepository
-                            .findByJobPostingIdAndStatus(
-                                    jobPosting.getId(),
-                                    status,
-                                    pageable
-                            );
-        }
-
-        return applications.map(
-                jobMapper::toResponse
+        JobPosting jobPosting = getRecruiterJob(
+                jobId,
+                recruiter.getId()
         );
+
+        Page<JobApplication> applications =
+                status == null
+                        ? jobApplicationRepository.findByJobPostingId(
+                                jobPosting.getId(),
+                                pageable
+                        )
+                        : jobApplicationRepository
+                        .findByJobPostingIdAndStatus(
+                                jobPosting.getId(),
+                                status,
+                                pageable
+                        );
+
+        return applications.map(jobMapper::toResponse);
     }
 
     @Override
@@ -95,17 +71,14 @@ public class RecruiterJobApplicationServiceImpl implements RecruiterJobApplicati
     public JobApplicationResponse getApplicationById(
             Long applicationId
     ) {
+        RecruiterProfile recruiter = getCurrentRecruiter();
 
-        RecruiterProfile recruiter =
-                getCurrentRecruiter();
-
-        JobApplication application =
+        return jobMapper.toResponse(
                 getRecruiterApplication(
                         applicationId,
                         recruiter.getId()
-                );
-
-        return jobMapper.toResponse(application);
+                )
+        );
     }
 
     @Override
@@ -113,58 +86,34 @@ public class RecruiterJobApplicationServiceImpl implements RecruiterJobApplicati
             Long applicationId,
             UpdateJobApplicationStatusRequest request
     ) {
+        RecruiterProfile recruiter = getCurrentRecruiter();
 
-        RecruiterProfile recruiter =
-                getCurrentRecruiter();
-
-        User currentUser =
-                getCurrentUser();
-
-        JobApplication application =
-                getRecruiterApplication(
-                        applicationId,
-                        recruiter.getId()
-                );
-
-        ApplicationStatus oldStatus =
-                application.getStatus();
-
-        ApplicationStatus newStatus =
-                request.getStatus();
-
-        validateStatusTransition(
-                oldStatus,
-                newStatus
+        JobApplication application = getRecruiterApplication(
+                applicationId,
+                recruiter.getId()
         );
 
+        ApplicationStatus previousStatus = application.getStatus();
+        ApplicationStatus newStatus = request.getStatus();
+
+        validateStatusTransition(previousStatus, newStatus);
+
+        LocalDateTime changedAt = LocalDateTime.now();
         application.setStatus(newStatus);
-        application.setLastStatusChangedAt(
-                LocalDateTime.now()
-        );
+        application.setLastStatusChangedAt(changedAt);
 
         JobApplication updatedApplication =
-                jobApplicationRepository.save(
-                        application
-                );
+                jobApplicationRepository.save(application);
 
-        ApplicationStatusHistory history =
-                ApplicationStatusHistory.builder()
-                        .application(updatedApplication)
-                        .previousStatus(oldStatus)
-                        .newStatus(newStatus)
-                        .changedBy(currentUser)
-                        .comment(
-                                normalizeText(
-                                        request.getComment()
-                                )
-                        )
-                        .build();
-
-        applicationStatusHistoryRepository.save(history);
-
-        return jobMapper.toResponse(
-                updatedApplication
+        applicationStatusHistoryService.recordStatusChange(
+                updatedApplication,
+                previousStatus,
+                newStatus,
+                recruiter.getUser(),
+                request.getComment()
         );
+
+        return jobMapper.toResponse(updatedApplication);
     }
 
     @Override
@@ -172,54 +121,30 @@ public class RecruiterJobApplicationServiceImpl implements RecruiterJobApplicati
             Long applicationId,
             UpdateRecruiterNotesRequest request
     ) {
+        RecruiterProfile recruiter = getCurrentRecruiter();
 
-        RecruiterProfile recruiter =
-                getCurrentRecruiter();
-
-        JobApplication application =
-                getRecruiterApplication(
-                        applicationId,
-                        recruiter.getId()
-                );
+        JobApplication application = getRecruiterApplication(
+                applicationId,
+                recruiter.getId()
+        );
 
         application.setRecruiterNotes(
                 normalizeText(request.getNotes())
         );
 
-        JobApplication updatedApplication =
-                jobApplicationRepository.save(
-                        application
-                );
-
         return jobMapper.toResponse(
-                updatedApplication
+                jobApplicationRepository.save(application)
         );
     }
 
     private RecruiterProfile getCurrentRecruiter() {
-
-        Long userId =
-                securityUtils.getCurrentUserId();
+        Long userId = securityUtils.getCurrentUserId();
 
         return recruiterProfileRepository
                 .findByUserIdAndActiveTrue(userId)
-                .orElseThrow(
-                        () -> new ResourceNotFoundException(
+                .orElseThrow(() ->
+                        new ResourceNotFoundException(
                                 "Active recruiter profile not found."
-                        )
-                );
-    }
-
-    private User getCurrentUser() {
-
-        Long userId =
-                securityUtils.getCurrentUserId();
-
-        return userRepository
-                .findById(userId)
-                .orElseThrow(
-                        () -> new ResourceNotFoundException(
-                                "User not found."
                         )
                 );
     }
@@ -228,15 +153,12 @@ public class RecruiterJobApplicationServiceImpl implements RecruiterJobApplicati
             Long jobId,
             Long recruiterId
     ) {
-
         return jobPostingRepository
-                .findByIdAndRecruiterId(
-                        jobId,
-                        recruiterId
-                )
-                .orElseThrow(
-                        () -> new ResourceNotFoundException(
-                                "Job posting not found or does not belong to the current recruiter."
+                .findByIdAndRecruiterId(jobId, recruiterId)
+                .orElseThrow(() ->
+                        new ResourceNotFoundException(
+                                "Job posting not found or does not belong "
+                                        + "to the current recruiter."
                         )
                 );
     }
@@ -245,15 +167,15 @@ public class RecruiterJobApplicationServiceImpl implements RecruiterJobApplicati
             Long applicationId,
             Long recruiterId
     ) {
-
         return jobApplicationRepository
                 .findByIdAndJobPostingRecruiterId(
                         applicationId,
                         recruiterId
                 )
-                .orElseThrow(
-                        () -> new ResourceNotFoundException(
-                                "Job application not found or does not belong to the current recruiter."
+                .orElseThrow(() ->
+                        new ResourceNotFoundException(
+                                "Job application not found or does not "
+                                        + "belong to the current recruiter."
                         )
                 );
     }
@@ -262,6 +184,11 @@ public class RecruiterJobApplicationServiceImpl implements RecruiterJobApplicati
             ApplicationStatus currentStatus,
             ApplicationStatus newStatus
     ) {
+        if (newStatus == null) {
+            throw new IllegalArgumentException(
+                    "New application status is required."
+            );
+        }
 
         if (currentStatus == newStatus) {
             throw new IllegalStateException(
@@ -271,10 +198,9 @@ public class RecruiterJobApplicationServiceImpl implements RecruiterJobApplicati
             );
         }
 
-        if (currentStatus == ApplicationStatus.WITHDRAWN ||
-                currentStatus == ApplicationStatus.REJECTED ||
-                currentStatus == ApplicationStatus.HIRED) {
-
+        if (currentStatus == ApplicationStatus.WITHDRAWN
+                || currentStatus == ApplicationStatus.REJECTED
+                || currentStatus == ApplicationStatus.HIRED) {
             throw new IllegalStateException(
                     "Application status cannot be changed from "
                             + currentStatus
@@ -282,61 +208,42 @@ public class RecruiterJobApplicationServiceImpl implements RecruiterJobApplicati
             );
         }
 
-        boolean validTransition =
-                switch (currentStatus) {
+        boolean validTransition = switch (currentStatus) {
+            case SUBMITTED ->
+                    newStatus == ApplicationStatus.UNDER_REVIEW
+                            || newStatus == ApplicationStatus.REJECTED;
 
-                    case SUBMITTED ->
-                            newStatus ==
-                                    ApplicationStatus.UNDER_REVIEW ||
-                                    newStatus ==
-                                            ApplicationStatus.REJECTED;
+            case UNDER_REVIEW ->
+                    newStatus == ApplicationStatus.SHORTLISTED
+                            || newStatus == ApplicationStatus.REJECTED;
 
-                    case UNDER_REVIEW ->
-                            newStatus ==
-                                    ApplicationStatus.SHORTLISTED ||
-                                    newStatus ==
-                                            ApplicationStatus.REJECTED;
+            case SHORTLISTED ->
+                    newStatus == ApplicationStatus.ASSESSMENT_SCHEDULED
+                            || newStatus == ApplicationStatus.INTERVIEW_SCHEDULED
+                            || newStatus == ApplicationStatus.REJECTED;
 
-                    case SHORTLISTED ->
-                            newStatus ==
-                                    ApplicationStatus.ASSESSMENT_SCHEDULED ||
-                                    newStatus ==
-                                            ApplicationStatus.INTERVIEW_SCHEDULED ||
-                                    newStatus ==
-                                            ApplicationStatus.REJECTED;
+            case ASSESSMENT_SCHEDULED ->
+                    newStatus == ApplicationStatus.ASSESSMENT_COMPLETED
+                            || newStatus == ApplicationStatus.REJECTED;
 
-                    case ASSESSMENT_SCHEDULED ->
-                            newStatus ==
-                                    ApplicationStatus.ASSESSMENT_COMPLETED ||
-                                    newStatus ==
-                                            ApplicationStatus.REJECTED;
+            case ASSESSMENT_COMPLETED ->
+                    newStatus == ApplicationStatus.INTERVIEW_SCHEDULED
+                            || newStatus == ApplicationStatus.REJECTED;
 
-                    case ASSESSMENT_COMPLETED ->
-                            newStatus ==
-                                    ApplicationStatus.INTERVIEW_SCHEDULED ||
-                                    newStatus ==
-                                            ApplicationStatus.REJECTED;
+            case INTERVIEW_SCHEDULED ->
+                    newStatus == ApplicationStatus.INTERVIEW_COMPLETED
+                            || newStatus == ApplicationStatus.REJECTED;
 
-                    case INTERVIEW_SCHEDULED ->
-                            newStatus ==
-                                    ApplicationStatus.INTERVIEW_COMPLETED ||
-                                    newStatus ==
-                                            ApplicationStatus.REJECTED;
+            case INTERVIEW_COMPLETED ->
+                    newStatus == ApplicationStatus.OFFERED
+                            || newStatus == ApplicationStatus.REJECTED;
 
-                    case INTERVIEW_COMPLETED ->
-                            newStatus ==
-                                    ApplicationStatus.OFFERED ||
-                                    newStatus ==
-                                            ApplicationStatus.REJECTED;
+            case OFFERED ->
+                    newStatus == ApplicationStatus.HIRED
+                            || newStatus == ApplicationStatus.REJECTED;
 
-                    case OFFERED ->
-                            newStatus ==
-                                    ApplicationStatus.HIRED ||
-                                    newStatus ==
-                                            ApplicationStatus.REJECTED;
-
-                    default -> false;
-                };
+            default -> false;
+        };
 
         if (!validTransition) {
             throw new IllegalStateException(
@@ -349,14 +256,9 @@ public class RecruiterJobApplicationServiceImpl implements RecruiterJobApplicati
         }
     }
 
-    private String normalizeText(
-            String value
-    ) {
-
-        if (value == null || value.isBlank()) {
-            return null;
-        }
-
-        return value.trim();
+    private String normalizeText(String value) {
+        return value == null || value.isBlank()
+                ? null
+                : value.trim();
     }
 }

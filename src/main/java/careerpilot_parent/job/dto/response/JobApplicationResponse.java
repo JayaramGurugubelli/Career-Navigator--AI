@@ -1,6 +1,6 @@
 package careerpilot_parent.job.dto.response;
 
-import careerpilot_parent.company.enums.ApplicationStatus;
+import careerpilot_parent.shared.enums.ApplicationStatus;
 import lombok.*;
 
 import java.time.LocalDateTime;

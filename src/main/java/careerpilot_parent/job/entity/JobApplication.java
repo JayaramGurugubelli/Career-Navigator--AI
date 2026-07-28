@@ -1,8 +1,9 @@
 package careerpilot_parent.job.entity;
 
 import careerpilot_parent.common.entity.BaseEntity;
-import careerpilot_parent.company.enums.ApplicationStatus;
+import careerpilot_parent.shared.enums.ApplicationStatus;
 import careerpilot_parent.resume.entity.Resume;
+import careerpilot_parent.shared.enums.ApplicationSource;
 import careerpilot_parent.student.entity.Student;
 
 import jakarta.persistence.*;
@@ -124,4 +125,7 @@ public class JobApplication extends BaseEntity {
 
     @Version
     private Long version;
+    @Enumerated(EnumType.STRING)
+    @Column(name = "application_source", length = 30)
+    private ApplicationSource applicationSource;
 }

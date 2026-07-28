@@ -1,11 +1,9 @@
 package careerpilot_parent.job.repository;
 
 import careerpilot_parent.job.entity.JobApplication;
-import careerpilot_parent.company.enums.ApplicationStatus;
-
+import careerpilot_parent.shared.enums.ApplicationStatus;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
-
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.Optional;
@@ -16,6 +14,11 @@ public interface JobApplicationRepository
     boolean existsByStudentIdAndJobPostingId(
             Long studentId,
             Long jobPostingId
+    );
+
+    boolean existsByIdAndStudentId(
+            Long applicationId,
+            Long studentId
     );
 
     Optional<JobApplication> findByIdAndStudentId(
@@ -34,14 +37,12 @@ public interface JobApplicationRepository
             Pageable pageable
     );
 
-    Optional<JobApplication>
-    findByIdAndJobPostingRecruiterId(
+    Optional<JobApplication> findByIdAndJobPostingRecruiterId(
             Long applicationId,
             Long recruiterId
     );
 
-    Page<JobApplication>
-    findByJobPostingIdAndJobPostingRecruiterId(
+    Page<JobApplication> findByJobPostingIdAndJobPostingRecruiterId(
             Long jobPostingId,
             Long recruiterId,
             Pageable pageable
@@ -54,6 +55,7 @@ public interface JobApplicationRepository
             ApplicationStatus status,
             Pageable pageable
     );
+
     Page<JobApplication> findByJobPostingId(
             Long jobPostingId,
             Pageable pageable
@@ -65,5 +67,5 @@ public interface JobApplicationRepository
             Pageable pageable
     );
 
-
+    long countByStatus(ApplicationStatus status);
 }

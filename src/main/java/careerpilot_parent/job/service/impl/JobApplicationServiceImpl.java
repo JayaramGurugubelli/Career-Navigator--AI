@@ -2,7 +2,6 @@ package careerpilot_parent.job.service.impl;
 
 import careerpilot_parent.common.exception.ResourceNotFoundException;
 
-import careerpilot_parent.company.enums.ApplicationStatus;
 import careerpilot_parent.company.enums.JobStatus;
 
 import careerpilot_parent.job.dto.request.CreateJobApplicationRequest;
@@ -25,6 +24,7 @@ import careerpilot_parent.resume.repository.ResumeRepository;
 
 import careerpilot_parent.security.util.SecurityUtils;
 
+import careerpilot_parent.shared.enums.ApplicationStatus;
 import careerpilot_parent.student.entity.Student;
 import careerpilot_parent.student.repository.StudentRepository;
 
@@ -45,8 +45,7 @@ import java.time.LocalDateTime;
 @Service
 @RequiredArgsConstructor
 @Transactional
-public class JobApplicationServiceImpl
-        implements JobApplicationService {
+public class JobApplicationServiceImpl implements JobApplicationService {
 
     private final JobApplicationRepository
             jobApplicationRepository;

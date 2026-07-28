@@ -51,4 +51,14 @@ public interface JobPostingRepository
             JobStatus status,
             Pageable pageable
     );
+
+    long countByStatus(
+            JobStatus status
+    );
+
+    /*
+     * A published job that has not been closed
+     * is treated as active.
+     */
+    long countByPublishedAtIsNotNullAndClosedAtIsNull();
 }

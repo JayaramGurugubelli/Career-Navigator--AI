@@ -23,5 +23,10 @@ public interface RecruiterProfileRepository
     boolean existsByOfficialEmailIgnoreCase(
             String officialEmail
     );
-    
+
+    long countByVerifiedTrue();
+
+    long countByVerifiedFalse();
+
+    long countByActiveTrue();
 }

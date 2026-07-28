@@ -1,10 +1,9 @@
 package careerpilot_parent.job.service;
 
-import careerpilot_parent.company.enums.ApplicationStatus;
-
 import careerpilot_parent.job.dto.request.CreateJobApplicationRequest;
 import careerpilot_parent.job.dto.response.JobApplicationResponse;
 
+import careerpilot_parent.shared.enums.ApplicationStatus;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 

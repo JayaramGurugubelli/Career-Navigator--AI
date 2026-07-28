@@ -1,7 +1,6 @@
 package careerpilot_parent.job.dto.request;
 
-import careerpilot_parent.company.enums.JobApplicationStatus;
-
+import careerpilot_parent.shared.enums.ApplicationStatus;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -51,7 +50,7 @@ public class UpdateJobApplicationRequest {
     private String jobUrl;
 
     @NotNull(message = "Job application status is required")
-    private JobApplicationStatus status;
+    private ApplicationStatus status;
 
     private LocalDate appliedDate;
 

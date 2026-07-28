@@ -1,7 +1,7 @@
 package careerpilot_parent.job.entity;
 
 import careerpilot_parent.common.entity.BaseEntity;
-import careerpilot_parent.company.enums.ApplicationStatus;
+import careerpilot_parent.shared.enums.ApplicationStatus;
 import careerpilot_parent.user.entity.User;
 
 import jakarta.persistence.*;
