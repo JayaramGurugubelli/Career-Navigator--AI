@@ -2,9 +2,13 @@ package careerpilot_parent.coding.repository;
 
 import careerpilot_parent.coding.entity.ProblemAttempt;
 import careerpilot_parent.coding.enums.ProblemAttemptStatus;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
-import org.springframework.data.jpa.repository.*;
+import org.springframework.data.jpa.repository.EntityGraph;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
@@ -16,6 +20,21 @@ public interface ProblemAttemptRepository
 
     Optional<ProblemAttempt> findByStudentIdAndProblemId(
             Long studentId,
+            Long problemId
+    );
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+            select attempt
+            from ProblemAttempt attempt
+            where attempt.student.id = :studentId
+              and attempt.problem.id = :problemId
+            """)
+    Optional<ProblemAttempt> findForUpdate(
+            @Param("studentId")
+            Long studentId,
+
+            @Param("problemId")
             Long problemId
     );
 
@@ -43,6 +62,10 @@ public interface ProblemAttemptRepository
             Pageable pageable
     );
 
+    @EntityGraph(attributePaths = {
+            "problem",
+            "problem.tags"
+    })
     List<ProblemAttempt>
     findTop10ByStudentIdOrderByLastAttemptedAtDesc(
             Long studentId
@@ -81,10 +104,26 @@ public interface ProblemAttemptRepository
             Long studentId
     );
 
+    @EntityGraph(attributePaths = {
+            "problem",
+            "problem.tags"
+    })
+    @Query("""
+            select distinct attempt
+            from ProblemAttempt attempt
+            where attempt.student.id = :studentId
+            """)
+    List<ProblemAttempt> findAllWithProblemAndTags(
+            @Param("studentId")
+            Long studentId
+    );
+
+    @EntityGraph(attributePaths = {
+            "problem"
+    })
     @Query("""
             select attempt
             from ProblemAttempt attempt
-            join fetch attempt.problem problem
             where attempt.student.id = :studentId
               and attempt.lastAttemptedAt >= :fromDate
               and attempt.lastAttemptedAt < :toDate
@@ -99,17 +138,5 @@ public interface ProblemAttemptRepository
 
             @Param("toDate")
             LocalDateTime toDate
-    );
-
-    @Query("""
-            select distinct attempt
-            from ProblemAttempt attempt
-            join fetch attempt.problem problem
-            left join fetch problem.tags tags
-            where attempt.student.id = :studentId
-            """)
-    List<ProblemAttempt> findAllWithProblemAndTags(
-            @Param("studentId")
-            Long studentId
     );
 }

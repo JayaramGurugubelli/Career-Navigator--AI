@@ -264,11 +264,10 @@ public class StudentCodingActivityServiceImpl
                                 range.endExclusive()
                         );
 
-        Map<LocalDate, List<ProblemAttempt>> byDate =
+        Map<LocalDate, List<ProblemAttempt>> attemptsByDate =
                 attempts.stream()
                         .filter(attempt ->
-                                attempt.getLastAttemptedAt()
-                                        != null
+                                attempt.getLastAttemptedAt() != null
                         )
                         .collect(
                                 Collectors.groupingBy(
@@ -282,17 +281,18 @@ public class StudentCodingActivityServiceImpl
         List<ActivityDay> days =
                 new ArrayList<>();
 
-        LocalDate date = range.fromDate();
+        LocalDate currentDate =
+                range.fromDate();
 
-        while (!date.isAfter(range.toDate())) {
-            List<ProblemAttempt> dayAttempts =
-                    byDate.getOrDefault(
-                            date,
+        while (!currentDate.isAfter(range.toDate())) {
+            List<ProblemAttempt> dailyAttempts =
+                    attemptsByDate.getOrDefault(
+                            currentDate,
                             List.of()
                     );
 
-            long solved =
-                    dayAttempts.stream()
+            long problemsSolved =
+                    dailyAttempts.stream()
                             .filter(attempt ->
                                     attempt.getStatus()
                                             == ProblemAttemptStatus.SOLVED
@@ -303,18 +303,21 @@ public class StudentCodingActivityServiceImpl
                             .distinct()
                             .count();
 
+            /*
+             * attemptCount represents the number of completed
+             * submission evaluations for the problem.
+             */
             long submissions =
-                    dayAttempts.stream()
+                    dailyAttempts.stream()
                             .mapToLong(attempt ->
                                     safeInteger(
-                                            attempt
-                                                    .getTotalSubmissionCount()
+                                            attempt.getAttemptCount()
                                     )
                             )
                             .sum();
 
-            long accepted =
-                    dayAttempts.stream()
+            long acceptedSubmissions =
+                    dailyAttempts.stream()
                             .mapToLong(attempt ->
                                     safeInteger(
                                             attempt
@@ -325,17 +328,18 @@ public class StudentCodingActivityServiceImpl
 
             days.add(
                     new ActivityDay(
-                            date,
+                            currentDate,
                             submissions,
-                            accepted,
-                            solved,
+                            acceptedSubmissions,
+                            problemsSolved,
                             calculateActivityLevel(
                                     submissions
                             )
                     )
             );
 
-            date = date.plusDays(1);
+            currentDate =
+                    currentDate.plusDays(1);
         }
 
         long activeDays =
@@ -353,7 +357,7 @@ public class StudentCodingActivityServiceImpl
                         )
                         .sum();
 
-        long totalSolved =
+        long totalProblemsSolved =
                 days.stream()
                         .mapToLong(
                                 ActivityDay::problemsSolved
@@ -365,11 +369,10 @@ public class StudentCodingActivityServiceImpl
                 range.toDate(),
                 activeDays,
                 totalSubmissions,
-                totalSolved,
+                totalProblemsSolved,
                 days
         );
     }
-
     @Override
     public List<Recommendation> recommendations(
             ProblemDifficulty difficulty,

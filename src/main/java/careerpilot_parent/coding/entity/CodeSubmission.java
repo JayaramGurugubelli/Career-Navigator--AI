@@ -134,4 +134,10 @@ public class CodeSubmission extends BaseEntity {
             status = SubmissionStatus.QUEUED;
         }
     }
+    @Version
+    @Column(
+            name = "version",
+            nullable = false
+    )
+    private Long version;
 }

@@ -26,11 +26,15 @@ import careerpilot_parent.student.entity.Student;
 import careerpilot_parent.student.repository.StudentRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
@@ -42,6 +46,15 @@ import java.util.List;
 @Transactional
 public class SubmissionJudgingServiceImpl
         implements SubmissionJudgingService {
+
+ private static final int MAX_SOURCE_CODE_LENGTH =
+         200_000;
+
+ private static final int MAX_SUBMISSION_PAGE_SIZE =
+         100;
+
+ private static final int MAX_ERROR_MESSAGE_LENGTH =
+         2_000;
 
  private final CodingProblemRepository
          codingProblemRepository;
@@ -71,7 +84,6 @@ public class SubmissionJudgingServiceImpl
  public Submission submit(
          Submit request
  ) {
-
   validateSubmissionRequest(request);
 
   Student student =
@@ -83,8 +95,8 @@ public class SubmissionJudgingServiceImpl
                           request.problemId(),
                           ProblemStatus.PUBLISHED
                   )
-                  .orElseThrow(
-                          () -> new ResponseStatusException(
+                  .orElseThrow(() ->
+                          new ResponseStatusException(
                                   HttpStatus.NOT_FOUND,
                                   "Published coding problem not found."
                           )
@@ -99,6 +111,9 @@ public class SubmissionJudgingServiceImpl
            "No active test cases are configured for this problem."
    );
   }
+
+  LocalDateTime now =
+          LocalDateTime.now();
 
   CodeSubmission submission =
           CodeSubmission.builder()
@@ -117,9 +132,7 @@ public class SubmissionJudgingServiceImpl
                   .totalTestCases(
                           activeTestCases.size()
                   )
-                  .submittedAt(
-                          LocalDateTime.now()
-                  )
+                  .submittedAt(now)
                   .build();
 
   CodeSubmission savedSubmission =
@@ -127,10 +140,19 @@ public class SubmissionJudgingServiceImpl
                   submission
           );
 
-  eventPublisher.publishEvent(
-          new SubmissionQueuedEvent(
-                  savedSubmission.getId()
-          )
+  recordQueuedAttempt(
+          student,
+          problem
+  );
+
+  /*
+   * Publish only after the submission transaction commits.
+   *
+   * This prevents the background listener from trying to read
+   * a submission that has not yet been committed.
+   */
+  publishSubmissionQueuedAfterCommit(
+          savedSubmission.getId()
   );
 
   return toResponse(savedSubmission);
@@ -141,7 +163,6 @@ public class SubmissionJudgingServiceImpl
  public Submission get(
          Long submissionId
  ) {
-
   validateSubmissionId(submissionId);
 
   Student student =
@@ -153,8 +174,8 @@ public class SubmissionJudgingServiceImpl
                           submissionId,
                           student.getId()
                   )
-                  .orElseThrow(
-                          () -> new ResponseStatusException(
+                  .orElseThrow(() ->
+                          new ResponseStatusException(
                                   HttpStatus.NOT_FOUND,
                                   "Submission not found."
                           )
@@ -169,23 +190,23 @@ public class SubmissionJudgingServiceImpl
          Long problemId,
          Pageable pageable
  ) {
-
   Student student =
           getCurrentStudent();
+
+  Pageable normalizedPageable =
+          normalizeSubmissionPageable(pageable);
 
   Page<CodeSubmission> submissions;
 
   if (problemId == null) {
-
    submissions =
            codeSubmissionRepository
                    .findByStudentIdOrderBySubmittedAtDesc(
                            student.getId(),
-                           pageable
+                           normalizedPageable
                    );
 
   } else {
-
    if (problemId <= 0) {
     throw new ResponseStatusException(
             HttpStatus.BAD_REQUEST,
@@ -198,7 +219,7 @@ public class SubmissionJudgingServiceImpl
                    .findByStudentIdAndProblemIdOrderBySubmittedAtDesc(
                            student.getId(),
                            problemId,
-                           pageable
+                           normalizedPageable
                    );
   }
 
@@ -211,18 +232,25 @@ public class SubmissionJudgingServiceImpl
  public void judge(
          Long submissionId
  ) {
-
   validateSubmissionId(submissionId);
 
+  /*
+   * Pessimistic locking prevents two async workers from
+   * claiming and judging the same submission simultaneously.
+   */
   CodeSubmission submission =
           codeSubmissionRepository
-                  .findById(submissionId)
-                  .orElseThrow(
-                          () -> new ResponseStatusException(
+                  .findForJudging(submissionId)
+                  .orElseThrow(() ->
+                          new ResponseStatusException(
                                   HttpStatus.NOT_FOUND,
                                   "Submission not found."
                           )
                   );
+
+  if (isTerminalStatus(submission.getStatus())) {
+   return;
+  }
 
   if (
           submission.getStatus()
@@ -251,9 +279,8 @@ public class SubmissionJudgingServiceImpl
           getActiveTestCases(problem);
 
   if (testCases.isEmpty()) {
-
-   markAsFailed(
-           submissionId,
+   completeAsFailed(
+           submission,
            "No active test cases are configured."
    );
 
@@ -263,7 +290,6 @@ public class SubmissionJudgingServiceImpl
   prepareResultsCollection(submission);
 
   int passedTestCases = 0;
-
   double awardedScore = 0.0;
   double maximumExecutionTime = 0.0;
   long maximumMemoryUsed = 0L;
@@ -272,7 +298,6 @@ public class SubmissionJudgingServiceImpl
           SubmissionStatus.ACCEPTED;
 
   for (ProblemTestCase testCase : testCases) {
-
    Request judgeRequest =
            buildJudgeRequest(
                    submission,
@@ -283,16 +308,14 @@ public class SubmissionJudgingServiceImpl
    Result judgeResult;
 
    try {
-
     judgeResult =
             judge0Client.execute(
                     judgeRequest
             );
 
    } catch (Exception exception) {
-
-    markAsFailed(
-            submissionId,
+    completeAsFailed(
+            submission,
             exception.getMessage()
     );
 
@@ -304,6 +327,11 @@ public class SubmissionJudgingServiceImpl
                    judgeResult
            );
 
+   if (testStatus == null) {
+    testStatus =
+            SubmissionStatus.INTERNAL_ERROR;
+   }
+
    boolean passed =
            testStatus
                    == SubmissionStatus.ACCEPTED;
@@ -311,13 +339,12 @@ public class SubmissionJudgingServiceImpl
    Double testCaseScore =
            resolveScoreWeight(testCase);
 
-   Double scoreAwarded =
+   double scoreAwarded =
            passed
                    ? testCaseScore
                    : 0.0;
 
    if (passed) {
-
     passedTestCases++;
     awardedScore += scoreAwarded;
 
@@ -325,7 +352,6 @@ public class SubmissionJudgingServiceImpl
            finalStatus
                    == SubmissionStatus.ACCEPTED
    ) {
-
     finalStatus = testStatus;
    }
 
@@ -339,8 +365,10 @@ public class SubmissionJudgingServiceImpl
                    judgeResult
            );
 
-   if (executionTime != null) {
-
+   if (
+           executionTime != null
+                   && executionTime >= 0
+   ) {
     maximumExecutionTime =
             Math.max(
                     maximumExecutionTime,
@@ -348,8 +376,10 @@ public class SubmissionJudgingServiceImpl
             );
    }
 
-   if (memoryUsed != null) {
-
+   if (
+           memoryUsed != null
+                   && memoryUsed >= 0
+   ) {
     maximumMemoryUsed =
             Math.max(
                     maximumMemoryUsed,
@@ -400,7 +430,6 @@ public class SubmissionJudgingServiceImpl
            testStatus
                    == SubmissionStatus.COMPILATION_ERROR
    ) {
-
     submission.setCompilerOutput(
             normalizeOutput(
                     judgeResult.compileOutput()
@@ -414,7 +443,6 @@ public class SubmissionJudgingServiceImpl
            testStatus
                    == SubmissionStatus.RUNTIME_ERROR
    ) {
-
     submission.setRuntimeError(
             normalizeOutput(
                     judgeResult.stderr()
@@ -426,7 +454,6 @@ public class SubmissionJudgingServiceImpl
            testStatus
                    == SubmissionStatus.INTERNAL_ERROR
    ) {
-
     submission.setRuntimeError(
             normalizeOutput(
                     judgeResult.message()
@@ -440,7 +467,9 @@ public class SubmissionJudgingServiceImpl
   SubmissionStatus completedStatus =
           passedTestCases == testCases.size()
                   ? SubmissionStatus.ACCEPTED
-                  : finalStatus;
+                  : normalizeTerminalStatus(
+                  finalStatus
+          );
 
   submission.setPassedTestCases(
           passedTestCases
@@ -467,8 +496,9 @@ public class SubmissionJudgingServiceImpl
   );
 
   /*
-   * When CodeSubmission contains a Double scoreAwarded field,
-   * this value can be persisted directly:
+   * Enable this when CodeSubmission contains:
+   *
+   * private Double scoreAwarded;
    *
    * submission.setScoreAwarded(awardedScore);
    */
@@ -486,7 +516,8 @@ public class SubmissionJudgingServiceImpl
   updateAttempt(
           student,
           problem,
-          savedSubmission
+          savedSubmission,
+          awardedScore
   );
  }
 
@@ -495,35 +526,187 @@ public class SubmissionJudgingServiceImpl
          Long submissionId,
          String errorMessage
  ) {
-
   validateSubmissionId(submissionId);
 
   CodeSubmission submission =
           codeSubmissionRepository
-                  .findById(submissionId)
-                  .orElseThrow(
-                          () -> new ResponseStatusException(
+                  .findForJudging(submissionId)
+                  .orElseThrow(() ->
+                          new ResponseStatusException(
                                   HttpStatus.NOT_FOUND,
                                   "Submission not found."
                           )
                   );
 
+  if (isTerminalStatus(submission.getStatus())) {
+   return;
+  }
+
+  completeAsFailed(
+          submission,
+          errorMessage
+  );
+ }
+
+ private void completeAsFailed(
+         CodeSubmission submission,
+         String errorMessage
+ ) {
   submission.setStatus(
           SubmissionStatus.INTERNAL_ERROR
   );
 
   submission.setRuntimeError(
-          normalizeErrorMessage(
-                  errorMessage
-          )
+          normalizeErrorMessage(errorMessage)
   );
 
   submission.setJudgedAt(
           LocalDateTime.now()
   );
 
-  codeSubmissionRepository.saveAndFlush(
-          submission
+  CodeSubmission savedSubmission =
+          codeSubmissionRepository.saveAndFlush(
+                  submission
+          );
+
+  updateProblemStatistics(
+          savedSubmission.getProblem(),
+          SubmissionStatus.INTERNAL_ERROR
+  );
+
+  updateAttempt(
+          savedSubmission.getStudent(),
+          savedSubmission.getProblem(),
+          savedSubmission,
+          0.0
+  );
+ }
+
+ private void recordQueuedAttempt(
+         Student student,
+         CodingProblem problem
+ ) {
+  /*
+   * An attempt row is unique per student and problem.
+   */
+  ProblemAttempt attempt =
+          problemAttemptRepository
+                  .findForUpdate(
+                          student.getId(),
+                          problem.getId()
+                  )
+                  .orElseGet(() ->
+                          ProblemAttempt.builder()
+                                  .student(student)
+                                  .problem(problem)
+                                  .status(
+                                          ProblemAttemptStatus.ATTEMPTED
+                                  )
+                                  .attemptCount(0)
+                                  .acceptedSubmissionCount(0)
+                                  .firstAttemptedAt(
+                                          LocalDateTime.now()
+                                  )
+                                  .lastAttemptedAt(
+                                          LocalDateTime.now()
+                                  )
+                                  .build()
+                  );
+
+  attempt.recordQueuedSubmission();
+
+  try {
+   problemAttemptRepository.saveAndFlush(
+           attempt
+   );
+
+  } catch (DataIntegrityViolationException exception) {
+   /*
+    * Handles two first submissions for the same problem
+    * arriving concurrently.
+    */
+   ProblemAttempt existing =
+           problemAttemptRepository
+                   .findForUpdate(
+                           student.getId(),
+                           problem.getId()
+                   )
+                   .orElseThrow(() -> exception);
+
+   existing.recordQueuedSubmission();
+
+   problemAttemptRepository.save(
+           existing
+   );
+  }
+ }
+
+ private void updateAttempt(
+         Student student,
+         CodingProblem problem,
+         CodeSubmission submission,
+         double awardedScore
+ ) {
+  LocalDateTime now =
+          LocalDateTime.now();
+
+  ProblemAttempt attempt =
+          problemAttemptRepository
+                  .findForUpdate(
+                          student.getId(),
+                          problem.getId()
+                  )
+                  .orElseGet(() ->
+                          ProblemAttempt.builder()
+                                  .student(student)
+                                  .problem(problem)
+                                  .status(
+                                          ProblemAttemptStatus.ATTEMPTED
+                                  )
+                                  .attemptCount(0)
+                                  .acceptedSubmissionCount(0)
+                                  .firstAttemptedAt(now)
+                                  .lastAttemptedAt(now)
+                                  .build()
+                  );
+
+  /*
+   * Exactly one increment per terminal submission.
+   */
+  attempt.recordCompletedAttempt();
+
+  if (
+          submission.getStatus()
+                  == SubmissionStatus.ACCEPTED
+  ) {
+   Integer score =
+           calculateSubmissionScore(
+                   submission,
+                   awardedScore
+           );
+
+   Long runtimeMilliseconds =
+           convertSecondsToMilliseconds(
+                   submission.getExecutionTimeSeconds()
+           );
+
+   attempt.recordAcceptedSubmission(
+           submission,
+           score,
+           runtimeMilliseconds,
+           submission.getMemoryUsedKilobytes()
+   );
+
+  } else {
+   /*
+    * A failed attempt cannot turn an already solved
+    * problem back into ATTEMPTED.
+    */
+   attempt.preserveSolvedStatusOrMarkAttempted();
+  }
+
+  problemAttemptRepository.save(
+          attempt
   );
  }
 
@@ -532,7 +715,6 @@ public class SubmissionJudgingServiceImpl
          CodingProblem problem,
          ProblemTestCase testCase
  ) {
-
   if (
           submission.getProgrammingLanguage() == null
                   || submission
@@ -542,6 +724,26 @@ public class SubmissionJudgingServiceImpl
    throw new ResponseStatusException(
            HttpStatus.BAD_REQUEST,
            "Judge0 is not configured for the submission language."
+   );
+  }
+
+  if (
+          problem.getTimeLimitMilliseconds() == null
+                  || problem.getTimeLimitMilliseconds() <= 0
+  ) {
+   throw new ResponseStatusException(
+           HttpStatus.CONFLICT,
+           "The problem has an invalid time limit."
+   );
+  }
+
+  if (
+          problem.getMemoryLimitMegabytes() == null
+                  || problem.getMemoryLimitMegabytes() <= 0
+  ) {
+   throw new ResponseStatusException(
+           HttpStatus.CONFLICT,
+           "The problem has an invalid memory limit."
    );
   }
 
@@ -555,8 +757,7 @@ public class SubmissionJudgingServiceImpl
                   / 1000.0;
 
   int memoryLimitMegabytes =
-          testCase
-                  .getCustomMemoryLimitMegabytes()
+          testCase.getCustomMemoryLimitMegabytes()
                   != null
                   ? testCase
                   .getCustomMemoryLimitMegabytes()
@@ -566,7 +767,6 @@ public class SubmissionJudgingServiceImpl
   int memoryLimitKilobytes;
 
   try {
-
    memoryLimitKilobytes =
            Math.multiplyExact(
                    memoryLimitMegabytes,
@@ -574,7 +774,6 @@ public class SubmissionJudgingServiceImpl
            );
 
   } catch (ArithmeticException exception) {
-
    throw new ResponseStatusException(
            HttpStatus.BAD_REQUEST,
            "Configured memory limit is too large."
@@ -596,7 +795,6 @@ public class SubmissionJudgingServiceImpl
  private List<ProblemTestCase> getActiveTestCases(
          CodingProblem problem
  ) {
-
   if (
           problem == null
                   || problem.getTestCases() == null
@@ -607,11 +805,10 @@ public class SubmissionJudgingServiceImpl
   return problem
           .getTestCases()
           .stream()
-          .filter(
-                  testCase ->
-                          Boolean.TRUE.equals(
-                                  testCase.getActive()
-                          )
+          .filter(testCase ->
+                  Boolean.TRUE.equals(
+                          testCase.getActive()
+                  )
           )
           .sorted(
                   Comparator.comparing(
@@ -627,7 +824,6 @@ public class SubmissionJudgingServiceImpl
  private void prepareResultsCollection(
          CodeSubmission submission
  ) {
-
   if (submission.getTestCaseResults() == null) {
    throw new IllegalStateException(
            "CodeSubmission.testCaseResults must be initialized."
@@ -637,12 +833,14 @@ public class SubmissionJudgingServiceImpl
   submission
           .getTestCaseResults()
           .clear();
+
+  submission.setCompilerOutput(null);
+  submission.setRuntimeError(null);
  }
 
  private void validateSubmissionRequest(
          Submit request
  ) {
-
   if (request == null) {
    throw new ResponseStatusException(
            HttpStatus.BAD_REQUEST,
@@ -686,12 +884,23 @@ public class SubmissionJudgingServiceImpl
            "Source code is required."
    );
   }
+
+  if (
+          request.sourceCode().length()
+                  > MAX_SOURCE_CODE_LENGTH
+  ) {
+   throw new ResponseStatusException(
+           HttpStatus.PAYLOAD_TOO_LARGE,
+           "Source code cannot exceed "
+                   + MAX_SOURCE_CODE_LENGTH
+                   + " characters."
+   );
+  }
  }
 
  private void validateSubmissionId(
          Long submissionId
  ) {
-
   if (
           submissionId == null
                   || submissionId <= 0
@@ -706,7 +915,6 @@ public class SubmissionJudgingServiceImpl
  private Double resolveScoreWeight(
          ProblemTestCase testCase
  ) {
-
   if (
           testCase.getScoreWeight() == null
                   || testCase.getScoreWeight() < 0
@@ -721,131 +929,194 @@ public class SubmissionJudgingServiceImpl
          CodingProblem problem,
          SubmissionStatus submissionStatus
  ) {
-
   long totalSubmissions =
           problem.getTotalSubmissions() == null
                   ? 0L
                   : problem.getTotalSubmissions();
 
   problem.setTotalSubmissions(
-          totalSubmissions + 1
+          Math.addExact(
+                  totalSubmissions,
+                  1L
+          )
   );
 
   if (
           submissionStatus
                   == SubmissionStatus.ACCEPTED
   ) {
-
    long acceptedSubmissions =
            problem.getAcceptedSubmissions() == null
                    ? 0L
                    : problem.getAcceptedSubmissions();
 
    problem.setAcceptedSubmissions(
-           acceptedSubmissions + 1
+           Math.addExact(
+                   acceptedSubmissions,
+                   1L
+           )
    );
   }
 
-  codingProblemRepository.save(
-          problem
+  codingProblemRepository.save(problem);
+ }
+
+ private Integer calculateSubmissionScore(
+         CodeSubmission submission,
+         double awardedScore
+ ) {
+  /*
+   * Prefer weighted score when test cases have score weights.
+   */
+  if (awardedScore > 0) {
+   return (int) Math.min(
+           100,
+           Math.round(awardedScore)
+   );
+  }
+
+  if (
+          submission.getTotalTestCases() == null
+                  || submission.getTotalTestCases() <= 0
+  ) {
+   return submission.getStatus()
+           == SubmissionStatus.ACCEPTED
+           ? 100
+           : 0;
+  }
+
+  int passed =
+          submission.getPassedTestCases() == null
+                  ? 0
+                  : submission.getPassedTestCases();
+
+  double score =
+          passed * 100.0
+                  / submission.getTotalTestCases();
+
+  return (int) Math.round(score);
+ }
+
+ private Long convertSecondsToMilliseconds(
+         Double executionTimeSeconds
+ ) {
+  if (
+          executionTimeSeconds == null
+                  || executionTimeSeconds < 0
+  ) {
+   return null;
+  }
+
+  double milliseconds =
+          executionTimeSeconds * 1_000.0;
+
+  if (milliseconds > Long.MAX_VALUE) {
+   return Long.MAX_VALUE;
+  }
+
+  return Math.round(milliseconds);
+ }
+
+ private Pageable normalizeSubmissionPageable(
+         Pageable pageable
+ ) {
+  if (pageable == null) {
+   return PageRequest.of(
+           0,
+           20
+   );
+  }
+
+  int pageNumber =
+          Math.max(
+                  pageable.getPageNumber(),
+                  0
+          );
+
+  int pageSize =
+          Math.min(
+                  Math.max(
+                          pageable.getPageSize(),
+                          1
+                  ),
+                  MAX_SUBMISSION_PAGE_SIZE
+          );
+
+  /*
+   * Sorting is defined in the repository method:
+   * OrderBySubmittedAtDesc.
+   */
+  return PageRequest.of(
+          pageNumber,
+          pageSize
   );
  }
 
- private void updateAttempt(
-         Student student,
-         CodingProblem problem,
-         CodeSubmission submission
+ private boolean isTerminalStatus(
+         SubmissionStatus status
  ) {
-
-  LocalDateTime now =
-          LocalDateTime.now();
-
-  ProblemAttempt attempt =
-          problemAttemptRepository
-                  .findByStudentIdAndProblemId(
-                          student.getId(),
-                          problem.getId()
-                  )
-                  .orElseGet(
-                          () -> ProblemAttempt.builder()
-                                  .student(student)
-                                  .problem(problem)
-                                  .status(
-                                          ProblemAttemptStatus.ATTEMPTED
-                                  )
-                                  .totalAttempts(0)
-                                  .acceptedAttempts(0)
-                                  .firstAttemptedAt(now)
-                                  .build()
-                  );
-
-  int totalAttempts =
-          attempt.getTotalAttempts() == null
-                  ? 0
-                  : attempt.getTotalAttempts();
-
-  attempt.setTotalAttempts(
-          totalAttempts + 1
-  );
-
-  attempt.setLastAttemptedAt(now);
-
-  if (
-          submission.getStatus()
-                  == SubmissionStatus.ACCEPTED
-  ) {
-
-   int acceptedAttempts =
-           attempt.getAcceptedAttempts() == null
-                   ? 0
-                   : attempt.getAcceptedAttempts();
-
-   attempt.setAcceptedAttempts(
-           acceptedAttempts + 1
-   );
-
-   attempt.setStatus(
-           ProblemAttemptStatus.SOLVED
-   );
-
-   if (attempt.getSolvedAt() == null) {
-    attempt.setSolvedAt(now);
-   }
-
-   attempt.setBestSubmission(
-           submission
-   );
-
-  } else if (
-          attempt.getStatus()
-                  != ProblemAttemptStatus.SOLVED
-  ) {
-
-   attempt.setStatus(
-           ProblemAttemptStatus.ATTEMPTED
-   );
+  if (status == null) {
+   return false;
   }
 
-  problemAttemptRepository.save(
-          attempt
+  return status != SubmissionStatus.QUEUED
+          && status != SubmissionStatus.PROCESSING;
+ }
+
+ private SubmissionStatus normalizeTerminalStatus(
+         SubmissionStatus status
+ ) {
+  if (
+          status == null
+                  || status == SubmissionStatus.QUEUED
+                  || status == SubmissionStatus.PROCESSING
+  ) {
+   return SubmissionStatus.INTERNAL_ERROR;
+  }
+
+  return status;
+ }
+
+ private void publishSubmissionQueuedAfterCommit(
+         Long submissionId
+ ) {
+  if (
+          TransactionSynchronizationManager
+                  .isSynchronizationActive()
+  ) {
+   TransactionSynchronizationManager
+           .registerSynchronization(
+                   new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                     eventPublisher.publishEvent(
+                             new SubmissionQueuedEvent(
+                                     submissionId
+                             )
+                     );
+                    }
+                   }
+           );
+
+   return;
+  }
+
+  eventPublisher.publishEvent(
+          new SubmissionQueuedEvent(
+                  submissionId
+          )
   );
  }
 
  private Submission toResponse(
          CodeSubmission submission
  ) {
-
   List<TestResult> testResults;
 
-  if (
-          submission.getTestCaseResults()
-                  == null
-  ) {
-
+  if (submission.getTestCaseResults() == null) {
    testResults = List.of();
 
   } else {
-
    testResults =
            submission
                    .getTestCaseResults()
@@ -861,9 +1132,7 @@ public class SubmissionJudgingServiceImpl
                                    )
                            )
                    )
-                   .map(
-                           this::toTestResult
-                   )
+                   .map(this::toTestResult)
                    .toList();
   }
 
@@ -889,7 +1158,6 @@ public class SubmissionJudgingServiceImpl
  private TestResult toTestResult(
          SubmissionTestCaseResult result
  ) {
-
   ProblemTestCase testCase =
           result.getTestCase();
 
@@ -923,14 +1191,13 @@ public class SubmissionJudgingServiceImpl
  }
 
  private Student getCurrentStudent() {
-
   Long currentUserId =
           securityUtils.getCurrentUserId();
 
   return studentRepository
           .findByUserId(currentUserId)
-          .orElseThrow(
-                  () -> new ResponseStatusException(
+          .orElseThrow(() ->
+                  new ResponseStatusException(
                           HttpStatus.NOT_FOUND,
                           "Student profile not found."
                   )
@@ -940,18 +1207,21 @@ public class SubmissionJudgingServiceImpl
  private String normalizeOutput(
          String output
  ) {
-
   if (output == null) {
    return null;
   }
 
-  return output.stripTrailing();
+  String normalized =
+          output.stripTrailing();
+
+  return normalized.isEmpty()
+          ? null
+          : normalized;
  }
 
  private String normalizeErrorMessage(
          String errorMessage
  ) {
-
   if (
           errorMessage == null
                   || errorMessage.isBlank()
@@ -959,17 +1229,15 @@ public class SubmissionJudgingServiceImpl
    return "Submission evaluation failed due to an internal error.";
   }
 
-  int maximumLength = 2_000;
-
   String normalized =
           errorMessage.strip();
 
   return normalized.length()
-          <= maximumLength
+          <= MAX_ERROR_MESSAGE_LENGTH
           ? normalized
           : normalized.substring(
           0,
-          maximumLength
+          MAX_ERROR_MESSAGE_LENGTH
   );
  }
 }

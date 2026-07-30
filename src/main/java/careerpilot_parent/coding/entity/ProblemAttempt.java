@@ -13,7 +13,7 @@ import java.time.LocalDateTime;
         name = "problem_attempts",
         uniqueConstraints = {
                 @UniqueConstraint(
-                        name = "uk_problem_attempt_student_problem",
+                        name = "uk_cp_problem_attempt_student_problem",
                         columnNames = {
                                 "student_id",
                                 "problem_id"
@@ -22,24 +22,28 @@ import java.time.LocalDateTime;
         },
         indexes = {
                 @Index(
-                        name = "idx_problem_attempt_student",
+                        name = "idx_cp_problem_attempt_student",
                         columnList = "student_id"
                 ),
                 @Index(
-                        name = "idx_problem_attempt_problem",
+                        name = "idx_cp_problem_attempt_problem",
                         columnList = "problem_id"
                 ),
                 @Index(
-                        name = "idx_problem_attempt_status",
+                        name = "idx_cp_problem_attempt_status",
                         columnList = "status"
                 ),
                 @Index(
-                        name = "idx_problem_attempt_last_attempted",
+                        name = "idx_cp_problem_attempt_student_status",
+                        columnList = "student_id,status"
+                ),
+                @Index(
+                        name = "idx_cp_problem_attempt_last_attempted",
                         columnList = "last_attempted_at"
                 ),
                 @Index(
-                        name = "idx_problem_attempt_student_status",
-                        columnList = "student_id,status"
+                        name = "idx_cp_problem_attempt_solved_at",
+                        columnList = "solved_at"
                 )
         }
 )
@@ -50,22 +54,28 @@ import java.time.LocalDateTime;
 @Builder
 public class ProblemAttempt extends BaseEntity {
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @ManyToOne(
+            fetch = FetchType.LAZY,
+            optional = false
+    )
     @JoinColumn(
             name = "student_id",
             nullable = false,
             foreignKey = @ForeignKey(
-                    name = "fk_problem_attempt_student"
+                    name = "fk_cp_problem_attempt_student"
             )
     )
     private Student student;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @ManyToOne(
+            fetch = FetchType.LAZY,
+            optional = false
+    )
     @JoinColumn(
             name = "problem_id",
             nullable = false,
             foreignKey = @ForeignKey(
-                    name = "fk_problem_attempt_problem"
+                    name = "fk_cp_problem_attempt_problem"
             )
     )
     private CodingProblem problem;
@@ -94,13 +104,6 @@ public class ProblemAttempt extends BaseEntity {
     @Builder.Default
     private Integer acceptedSubmissionCount = 0;
 
-    @Column(
-            name = "total_submission_count",
-            nullable = false
-    )
-    @Builder.Default
-    private Integer totalSubmissionCount = 0;
-
     @Column(name = "best_score")
     private Integer bestScore;
 
@@ -109,6 +112,15 @@ public class ProblemAttempt extends BaseEntity {
 
     @Column(name = "best_memory_kilobytes")
     private Long bestMemoryKilobytes;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(
+            name = "best_submission_id",
+            foreignKey = @ForeignKey(
+                    name = "fk_cp_problem_attempt_best_submission"
+            )
+    )
+    private CodeSubmission bestSubmission;
 
     @Column(
             name = "first_attempted_at",
@@ -126,11 +138,14 @@ public class ProblemAttempt extends BaseEntity {
     private LocalDateTime solvedAt;
 
     @Version
-    @Column(name = "version")
+    @Column(
+            name = "version",
+            nullable = false
+    )
     private Long version;
 
     @PrePersist
-    public void initializeAttempt() {
+    public void initializeDefaults() {
         LocalDateTime now = LocalDateTime.now();
 
         if (status == null) {
@@ -145,10 +160,6 @@ public class ProblemAttempt extends BaseEntity {
             acceptedSubmissionCount = 0;
         }
 
-        if (totalSubmissionCount == null) {
-            totalSubmissionCount = 0;
-        }
-
         if (firstAttemptedAt == null) {
             firstAttemptedAt = now;
         }
@@ -156,29 +167,41 @@ public class ProblemAttempt extends BaseEntity {
         if (lastAttemptedAt == null) {
             lastAttemptedAt = now;
         }
+
+        if (version == null) {
+            version = 0L;
+        }
     }
 
-    public void recordSubmission() {
+    public void recordQueuedSubmission() {
         LocalDateTime now = LocalDateTime.now();
-
-        totalSubmissionCount =
-                safeIncrement(totalSubmissionCount);
-
-        attemptCount =
-                safeIncrement(attemptCount);
-
-        lastAttemptedAt = now;
 
         if (firstAttemptedAt == null) {
             firstAttemptedAt = now;
         }
+
+        lastAttemptedAt = now;
 
         if (status == null) {
             status = ProblemAttemptStatus.ATTEMPTED;
         }
     }
 
+    public void recordCompletedAttempt() {
+        attemptCount =
+                safeIncrement(attemptCount);
+
+        lastAttemptedAt =
+                LocalDateTime.now();
+
+        if (firstAttemptedAt == null) {
+            firstAttemptedAt =
+                    lastAttemptedAt;
+        }
+    }
+
     public void recordAcceptedSubmission(
+            CodeSubmission submission,
             Integer score,
             Long runtimeMilliseconds,
             Long memoryKilobytes
@@ -186,7 +209,9 @@ public class ProblemAttempt extends BaseEntity {
         LocalDateTime now = LocalDateTime.now();
 
         acceptedSubmissionCount =
-                safeIncrement(acceptedSubmissionCount);
+                safeIncrement(
+                        acceptedSubmissionCount
+                );
 
         status = ProblemAttemptStatus.SOLVED;
         lastAttemptedAt = now;
@@ -195,11 +220,54 @@ public class ProblemAttempt extends BaseEntity {
             solvedAt = now;
         }
 
-        if (
+        boolean betterScore =
                 score != null
                         && (
                         bestScore == null
                                 || score > bestScore
+                );
+
+        boolean sameScoreButFaster =
+                score != null
+                        && bestScore != null
+                        && score.equals(bestScore)
+                        && runtimeMilliseconds != null
+                        && (
+                        bestRuntimeMilliseconds == null
+                                || runtimeMilliseconds
+                                < bestRuntimeMilliseconds
+                );
+
+        boolean sameScoreRuntimeLessMemory =
+                score != null
+                        && bestScore != null
+                        && score.equals(bestScore)
+                        && runtimeMilliseconds != null
+                        && bestRuntimeMilliseconds != null
+                        && runtimeMilliseconds.equals(
+                        bestRuntimeMilliseconds
+                )
+                        && memoryKilobytes != null
+                        && (
+                        bestMemoryKilobytes == null
+                                || memoryKilobytes
+                                < bestMemoryKilobytes
+                );
+
+        if (
+                bestSubmission == null
+                        || betterScore
+                        || sameScoreButFaster
+                        || sameScoreRuntimeLessMemory
+        ) {
+            bestSubmission = submission;
+        }
+
+        if (
+                score != null
+                        && (
+                        bestScore == null
+                                || betterScore
                 )
         ) {
             bestScore = score;
@@ -232,11 +300,22 @@ public class ProblemAttempt extends BaseEntity {
         }
     }
 
-    private int safeIncrement(Integer value) {
-        if (value == null) {
+    public void preserveSolvedStatusOrMarkAttempted() {
+        if (status != ProblemAttemptStatus.SOLVED) {
+            status = ProblemAttemptStatus.ATTEMPTED;
+        }
+    }
+
+    private int safeIncrement(
+            Integer currentValue
+    ) {
+        if (currentValue == null) {
             return 1;
         }
 
-        return Math.addExact(value, 1);
+        return Math.addExact(
+                currentValue,
+                1
+        );
     }
 }
