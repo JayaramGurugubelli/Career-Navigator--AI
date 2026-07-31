@@ -1,0 +1,8 @@
+package career_Navigator_parent.user.repository;
+
+import career_Navigator_parent.user.entity.UserRole;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+public interface UserRoleRepository extends JpaRepository<UserRole, Long> {
+
+}
