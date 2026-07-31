@@ -22,6 +22,7 @@ import careerpilot_parent.coding.repository.CodingProblemRepository;
 import careerpilot_parent.coding.repository.ProblemTestCaseRepository;
 import careerpilot_parent.coding.service.ProblemTestCaseService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
@@ -195,76 +196,73 @@ public class ProblemTestCaseServiceImpl
             Long problemId,
             Import request
     ) {
-
-        CodingProblem problem =
-                getRequiredProblem(problemId);
-
+        CodingProblem problem = getRequiredProblem(problemId);
         validateImportRequest(request);
 
-        List<Create> createRequests =
-                new ArrayList<>(
-                        request.rows().size()
-                );
+        List<ImportRow> importRows = request.rows();
+        boolean replaceExisting = Boolean.TRUE.equals(request.replaceExisting());
 
-        int currentDisplayOrder =
-                request.startingDisplayOrder();
-
-        for (ImportRow row : request.rows()) {
-
-            TestCaseVisibility visibility =
-                    row.visibility() == null
-                            ? request.defaultVisibility()
-                            : row.visibility();
-
-            Double scoreWeight =
-                    row.scoreWeight() == null
-                            ? request.defaultScoreWeight()
-                            : row.scoreWeight();
-
-            createRequests.add(
-                    new Create(
-                            row.input(),
-                            row.expectedOutput(),
-                            visibility,
-                            currentDisplayOrder,
-                            scoreWeight,
-                            row.customTimeLimitSeconds(),
-                            row.customMemoryLimitMegabytes()
-                    )
-            );
-
-            currentDisplayOrder++;
+        if (replaceExisting) {
+            testCases.deactivateAllActiveByProblemId(problemId);
+            testCases.flush();
         }
 
-        List<ProblemTestCase> entities =
-                prepareBatchEntities(
-                        problem,
-                        createRequests
-                );
+        int startingDisplayOrder = resolveStartingDisplayOrder(
+                problemId,
+                request.startingDisplayOrder(),
+                replaceExisting
+        );
 
-        persistInDatabaseBatches(entities);
+        List<Create> createRequests = new ArrayList<>(importRows.size());
+        int currentDisplayOrder = startingDisplayOrder;
 
-        int endingDisplayOrder =
-                request.startingDisplayOrder()
-                        + entities.size()
-                        - 1;
+        for (ImportRow row : importRows) {
+            TestCaseVisibility visibility = row.visibility() == null
+                    ? request.defaultVisibility()
+                    : row.visibility();
+
+            Double scoreWeight = row.scoreWeight() == null
+                    ? request.defaultScoreWeight()
+                    : row.scoreWeight();
+
+            createRequests.add(new Create(
+                    row.input(),
+                    row.expectedOutput(),
+                    visibility,
+                    currentDisplayOrder,
+                    scoreWeight,
+                    row.customTimeLimitSeconds(),
+                    row.customMemoryLimitMegabytes()
+            ));
+
+            currentDisplayOrder = Math.addExact(currentDisplayOrder, 1);
+        }
+
+        List<ProblemTestCase> entities = prepareBatchEntities(problem, createRequests);
+
+        try {
+            persistInDatabaseBatches(entities);
+        } catch (DataIntegrityViolationException exception) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "The test-case import conflicted with existing display orders or duplicate inputs.",
+                    exception
+            );
+        }
+
+        int endingDisplayOrder = entities.isEmpty()
+                ? startingDisplayOrder
+                : Math.addExact(startingDisplayOrder, entities.size() - 1);
 
         return new ImportResult(
                 problemId,
-                normalizeRequiredText(
-                        request.importReference(),
-                        "Import reference is required."
-                ),
-                request.rows().size(),
+                normalizeRequiredText(request.importReference(), "Import reference is required."),
+                importRows.size(),
                 entities.size(),
                 0,
-                request.startingDisplayOrder(),
+                startingDisplayOrder,
                 endingDisplayOrder,
-                safeInt(
-                        testCases.countByProblemIdAndActiveTrue(
-                                problemId
-                        )
-                ),
+                safeInt(testCases.countByProblemIdAndActiveTrue(problemId)),
                 Collections.emptyList()
         );
     }
@@ -834,60 +832,58 @@ public class ProblemTestCaseServiceImpl
     private void validateImportRequest(
             Import request
     ) {
-
         if (request == null) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "Test-case import request is required."
-            );
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Test-case import request is required.");
         }
 
-        normalizeRequiredText(
-                request.importReference(),
-                "Import reference is required."
-        );
+        normalizeRequiredText(request.importReference(), "Import reference is required.");
 
         if (request.defaultVisibility() == null) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "Default visibility is required."
-            );
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Default visibility is required.");
         }
 
-        if (
-                request.startingDisplayOrder() == null
-                        || request.startingDisplayOrder() <= 0
-        ) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "Starting display order must be positive."
-            );
+        if (request.startingDisplayOrder() != null && request.startingDisplayOrder() <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Starting display order must be positive.");
         }
 
-        if (
-                request.defaultScoreWeight() == null
-                        || request.defaultScoreWeight() <= 0
-        ) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "Default score weight must be positive."
-            );
+        if (request.defaultScoreWeight() == null || request.defaultScoreWeight() <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Default score weight must be positive.");
         }
 
-        if (
-                request.rows() == null
-                        || request.rows().isEmpty()
-        ) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "At least one import row is required."
-            );
+        if (request.rows() == null || request.rows().isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "At least one import row is required.");
         }
 
         if (request.rows().size() > MAX_BATCH_SIZE) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A maximum of 500 import rows is allowed.");
+        }
+    }
+
+    private int resolveStartingDisplayOrder(
+            Long problemId,
+            Integer requestedStartingDisplayOrder,
+            boolean replaceExisting
+    ) {
+        if (requestedStartingDisplayOrder != null) {
+            return requestedStartingDisplayOrder;
+        }
+
+        if (replaceExisting) {
+            return 1;
+        }
+
+        Integer maximumDisplayOrder =
+                testCases.findMaximumActiveDisplayOrderByProblemId(problemId);
+
+        int currentMaximum = maximumDisplayOrder == null ? 0 : maximumDisplayOrder;
+
+        try {
+            return Math.addExact(currentMaximum, 1);
+        } catch (ArithmeticException exception) {
             throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "A maximum of 500 import rows is allowed."
+                    HttpStatus.CONFLICT,
+                    "Unable to allocate the next test-case display order.",
+                    exception
             );
         }
     }

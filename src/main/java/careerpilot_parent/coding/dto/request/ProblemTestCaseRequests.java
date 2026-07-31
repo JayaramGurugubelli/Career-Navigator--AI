@@ -1,5 +1,6 @@
 package careerpilot_parent.coding.dto.request;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import careerpilot_parent.coding.enums.ProgrammingLanguage;
 import careerpilot_parent.coding.enums.TestCaseGeneratorType;
 import careerpilot_parent.coding.enums.TestCaseVisibility;
@@ -132,7 +133,7 @@ public final class ProblemTestCaseRequests {
     }
 
     /*
-     * Retained so existing classes importing BulkCreate continue compiling.
+     * Retained for backward compatibility.
      */
     @Deprecated
     public record BulkCreate(
@@ -157,7 +158,6 @@ public final class ProblemTestCaseRequests {
     ) {
 
         public BatchCreate toBatchCreate() {
-
             return new BatchCreate(
                     batchReference,
                     testCases
@@ -165,6 +165,18 @@ public final class ProblemTestCaseRequests {
         }
     }
 
+    /*
+     * Backward-compatible import contract.
+     *
+     * Existing clients can continue sending:
+     *     "rows": [...]
+     *
+     * New clients can send:
+     *     "testCases": [...]
+     *
+     * startingDisplayOrder is optional. The service must calculate
+     * max(existing displayOrder) + 1 when the field is absent.
+     */
     public record Import(
 
             @NotBlank(
@@ -176,14 +188,13 @@ public final class ProblemTestCaseRequests {
             )
             String importReference,
 
+            Boolean replaceExisting,
+
             @NotNull(
                     message = "Default visibility is required."
             )
             TestCaseVisibility defaultVisibility,
 
-            @NotNull(
-                    message = "Starting display order is required."
-            )
             @Positive(
                     message = "Starting display order must be positive."
             )
@@ -197,6 +208,7 @@ public final class ProblemTestCaseRequests {
             )
             Double defaultScoreWeight,
 
+            @JsonAlias("testCases")
             @NotEmpty(
                     message = "Import rows are required."
             )
@@ -206,6 +218,10 @@ public final class ProblemTestCaseRequests {
             )
             List<@Valid ImportRow> rows
     ) {
+
+        public boolean shouldReplaceExisting() {
+            return Boolean.TRUE.equals(replaceExisting);
+        }
     }
 
     public record ImportRow(
