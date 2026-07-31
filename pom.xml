@@ -15,11 +15,12 @@
 		<relativePath/>
 	</parent>
 
-	<groupId>com.careerpilot</groupId>
-	<artifactId>careerpilot</artifactId>
+
+	<groupId>com.careerNavigator-AI</groupId>
+	<artifactId>careerNavigator</artifactId>
 	<version>0.0.1-SNAPSHOT</version>
 
-	<name>CareerPilot AI</name>
+	<name>CareerNavigator AI</name>
 
 	<description>
 		AI Powered Career Management Platform

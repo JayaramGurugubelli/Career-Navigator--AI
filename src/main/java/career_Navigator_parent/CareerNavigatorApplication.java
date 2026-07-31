@@ -9,10 +9,10 @@ import org.springframework.context.annotation.EnableAspectJAutoProxy;
 @SpringBootApplication
 @EnableScheduling
 @EnableAspectJAutoProxy(proxyTargetClass = true)
-public class CareerpilotParentApplication {
+public class CareerNavigatorApplication {
 
 	public static void main(String[] args) {
 
-		SpringApplication.run(CareerpilotParentApplication.class, args);
+		SpringApplication.run(CareerNavigatorApplication.class, args);
 	}
 }
