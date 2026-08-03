@@ -26,6 +26,9 @@ import org.springframework.web.server.ResponseStatusException;
 public class AsyncSubmissionServiceImpl
         implements AsyncSubmissionService {
 
+    private static final int MAX_SOURCE_CODE_LENGTH =
+            200_000;
+
     private final CodingProblemRepository codingProblemRepository;
     private final CodeSubmissionRepository codeSubmissionRepository;
     private final StudentRepository studentRepository;
@@ -71,8 +74,12 @@ public class AsyncSubmissionServiceImpl
                         .programmingLanguage(
                                 request.programmingLanguage()
                         )
+                        /*
+                         * Do not trim source code because indentation
+                         * is meaningful in languages such as Python.
+                         */
                         .sourceCode(
-                                request.sourceCode().trim()
+                                request.sourceCode()
                         )
                         .status(
                                 SubmissionStatus.QUEUED
@@ -83,13 +90,20 @@ public class AsyncSubmissionServiceImpl
                         .memoryUsedKilobytes(null)
                         .compilerOutput(null)
                         .runtimeError(null)
+                        .standardOutput(null)
+                        .submittedAt(
+                                java.time.LocalDateTime.now()
+                        )
                         .build();
 
         CodeSubmission savedSubmission =
-                codeSubmissionRepository.save(
-                        submission
-                );
+                codeSubmissionRepository
+                        .saveAndFlush(submission);
 
+        /*
+         * The event is published while the current transaction is active.
+         * TransactionalEventListener will execute it only after commit.
+         */
         eventPublisher.publishEvent(
                 new SubmissionQueuedEvent(
                         savedSubmission.getId()
@@ -102,6 +116,66 @@ public class AsyncSubmissionServiceImpl
                 "Submission accepted and queued for evaluation.",
                 savedSubmission.getSubmittedAt()
         );
+    }
+
+    private void validateRequest(
+            SubmitCodeRequest request
+    ) {
+        if (request == null) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Submission request is required."
+            );
+        }
+
+        if (
+                request.problemId() == null
+                        || request.problemId() <= 0
+        ) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "A valid problem ID is required."
+            );
+        }
+
+        if (request.programmingLanguage() == null) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Programming language is required."
+            );
+        }
+
+        if (
+                !request.programmingLanguage()
+                        .isPistonConfigured()
+        ) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Piston is not configured for the selected language."
+            );
+        }
+
+        if (
+                request.sourceCode() == null
+                        || request.sourceCode().isBlank()
+        ) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Source code is required."
+            );
+        }
+
+        if (
+                request.sourceCode().length()
+                        > MAX_SOURCE_CODE_LENGTH
+        ) {
+            throw new ResponseStatusException(
+                    HttpStatus.PAYLOAD_TOO_LARGE,
+                    "Source code cannot exceed "
+                            + MAX_SOURCE_CODE_LENGTH
+                            + " characters."
+            );
+        }
     }
 
     private Student getCurrentStudent() {
@@ -119,56 +193,26 @@ public class AsyncSubmissionServiceImpl
                 );
     }
 
-    private void validateRequest(
-            SubmitCodeRequest request
-    ) {
-        if (request == null) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "Submission request is required."
-            );
-        }
-
-        if (request.problemId() == null) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "Problem ID is required."
-            );
-        }
-
-        if (request.programmingLanguage() == null) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "Programming language is required."
-            );
-        }
-
-        if (
-                request.sourceCode() == null
-                        || request.sourceCode().isBlank()
-        ) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "Source code is required."
-            );
-        }
-    }
-
     private int countActiveTestCases(
             CodingProblem problem
     ) {
-        if (problem.getTestCases() == null) {
+        if (
+                problem.getTestCases() == null
+                        || problem.getTestCases().isEmpty()
+        ) {
             return 0;
         }
 
-        return (int) problem
-                .getTestCases()
-                .stream()
-                .filter(testCase ->
-                        Boolean.TRUE.equals(
-                                testCase.getActive()
+        return Math.toIntExact(
+                problem
+                        .getTestCases()
+                        .stream()
+                        .filter(testCase ->
+                                Boolean.TRUE.equals(
+                                        testCase.getActive()
+                                )
                         )
-                )
-                .count();
+                        .count()
+        );
     }
 }

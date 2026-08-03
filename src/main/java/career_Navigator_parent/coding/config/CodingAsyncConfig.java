@@ -2,6 +2,7 @@ package career_Navigator_parent.coding.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.task.TaskDecorator;
 import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
@@ -19,8 +20,8 @@ public class CodingAsyncConfig {
                 new ThreadPoolTaskExecutor();
 
         executor.setCorePoolSize(4);
-        executor.setMaxPoolSize(10);
-        executor.setQueueCapacity(100);
+        executor.setMaxPoolSize(12);
+        executor.setQueueCapacity(500);
 
         executor.setThreadNamePrefix(
                 "submission-executor-"
@@ -31,11 +32,19 @@ public class CodingAsyncConfig {
         );
 
         executor.setAwaitTerminationSeconds(
-                30
+                60
         );
 
+        /*
+         * CallerRunsPolicy avoids silently losing a submission event
+         * when the executor queue is temporarily full.
+         */
         executor.setRejectedExecutionHandler(
                 new ThreadPoolExecutor.CallerRunsPolicy()
+        );
+
+        executor.setTaskDecorator(
+                contextCopyingTaskDecorator()
         );
 
         executor.initialize();
@@ -51,7 +60,7 @@ public class CodingAsyncConfig {
 
         executor.setCorePoolSize(2);
         executor.setMaxPoolSize(4);
-        executor.setQueueCapacity(25);
+        executor.setQueueCapacity(100);
 
         executor.setThreadNamePrefix(
                 "test-case-generation-"
@@ -66,11 +75,47 @@ public class CodingAsyncConfig {
         );
 
         executor.setRejectedExecutionHandler(
-                new ThreadPoolExecutor.AbortPolicy()
+                new ThreadPoolExecutor.CallerRunsPolicy()
+        );
+
+        executor.setTaskDecorator(
+                contextCopyingTaskDecorator()
         );
 
         executor.initialize();
 
         return executor;
+    }
+
+    private TaskDecorator contextCopyingTaskDecorator() {
+
+        return runnable -> {
+
+            ClassLoader contextClassLoader =
+                    Thread.currentThread()
+                            .getContextClassLoader();
+
+            return () -> {
+
+                Thread currentThread =
+                        Thread.currentThread();
+
+                ClassLoader previousClassLoader =
+                        currentThread.getContextClassLoader();
+
+                try {
+                    currentThread.setContextClassLoader(
+                            contextClassLoader
+                    );
+
+                    runnable.run();
+
+                } finally {
+                    currentThread.setContextClassLoader(
+                            previousClassLoader
+                    );
+                }
+            };
+        };
     }
 }

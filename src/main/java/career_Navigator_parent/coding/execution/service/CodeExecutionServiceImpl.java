@@ -6,16 +6,19 @@ import career_Navigator_parent.coding.dto.response.CodingResponses.Execution;
 import career_Navigator_parent.coding.entity.CodingProblem;
 import career_Navigator_parent.coding.enums.ProblemStatus;
 import career_Navigator_parent.coding.enums.ProgrammingLanguage;
-import career_Navigator_parent.coding.execution.client.Judge0Client;
-import career_Navigator_parent.coding.execution.dto.Judge0Models.Request;
-import career_Navigator_parent.coding.execution.dto.Judge0Models.Result;
-import career_Navigator_parent.coding.execution.mapper.Judge0ResultMapper;
+import career_Navigator_parent.coding.execution.client.PistonClient;
+import career_Navigator_parent.coding.execution.dto.PistonModels.ExecuteRequest;
+import career_Navigator_parent.coding.execution.dto.PistonModels.ExecuteResponse;
+import career_Navigator_parent.coding.execution.dto.PistonModels.File;
+import career_Navigator_parent.coding.execution.mapper.PistonResultMapper;
 import career_Navigator_parent.coding.repository.CodingProblemRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
+
+import java.util.List;
 
 @Service
 @RequiredArgsConstructor
@@ -26,20 +29,19 @@ public class CodeExecutionServiceImpl
  private static final int MAX_SOURCE_CODE_LENGTH = 100_000;
  private static final int MAX_CUSTOM_INPUT_LENGTH = 50_000;
 
- private static final double DEFAULT_TIME_LIMIT_SECONDS = 2.0;
+ private static final int DEFAULT_TIME_LIMIT_MILLISECONDS = 2_000;
  private static final int DEFAULT_MEMORY_LIMIT_MEGABYTES = 256;
 
- private final CodingProblemRepository codingProblemRepository;
- private final Judge0Client judge0Client;
- private final Judge0ResultMapper judge0ResultMapper;
 
- /**
-  * Canonical execution endpoint:
-  *
-  * POST /api/student/coding/executions/run
-  *
-  * problemId is supplied inside the request body.
-  */
+
+ private static final long DEFAULT_COMPILE_MEMORY_LIMIT_BYTES =
+         512L * 1024L * 1024L;
+ private static final long DEFAULT_COMPILE_TIMEOUT_MILLISECONDS =
+         10_000L;
+ private final CodingProblemRepository codingProblemRepository;
+ private final PistonClient pistonClient;
+ private final PistonResultMapper pistonResultMapper;
+
  @Override
  public Execution run(
          Run request
@@ -54,13 +56,6 @@ public class CodeExecutionServiceImpl
   );
  }
 
- /**
-  * Problem-scoped execution endpoint:
-  *
-  * POST /api/student/coding/problems/{problemId}/run
-  *
-  * problemId is supplied as a path variable.
-  */
  @Override
  public Execution run(
          Long problemId,
@@ -79,9 +74,6 @@ public class CodeExecutionServiceImpl
   );
  }
 
- /**
-  * Shared execution flow used by both run endpoints.
-  */
  private Execution execute(
          Long problemId,
          ProgrammingLanguage language,
@@ -91,65 +83,35 @@ public class CodeExecutionServiceImpl
   CodingProblem problem =
           getPublishedProblem(problemId);
 
-  validateLanguageConfiguration(language);
-
-  Request judgeRequest =
-          buildJudgeRequest(
+  ExecuteRequest pistonRequest =
+          buildPistonRequest(
                   problem,
                   language,
                   sourceCode,
                   customInput
           );
 
-  Result judgeResult =
-          executeWithJudge0(judgeRequest);
+  ExecuteResponse pistonResponse;
 
-  return mapExecutionResult(judgeResult);
- }
-
- /**
-  * Calls Judge0 and converts provider/network failures into meaningful
-  * gateway responses.
-  */
- private Result executeWithJudge0(
-         Request judgeRequest
- ) {
   try {
-   Result judgeResult =
-           judge0Client.execute(judgeRequest);
-
-   if (judgeResult == null) {
-    throw new ResponseStatusException(
-            HttpStatus.BAD_GATEWAY,
-            "Code execution provider returned an empty response."
-    );
-   }
-
-   return judgeResult;
+   pistonResponse =
+           pistonClient.execute(pistonRequest);
 
   } catch (ResponseStatusException exception) {
-   /*
-    * Preserve the original status and message returned by
-    * Judge0Client.
-    */
    throw exception;
 
   } catch (Exception exception) {
-   String providerMessage =
-           resolveExceptionMessage(exception);
-
    throw new ResponseStatusException(
            HttpStatus.BAD_GATEWAY,
-           "Judge0 execution failed: "
-                   + providerMessage,
+           "Piston execution failed: "
+                   + resolveExceptionMessage(exception),
            exception
    );
   }
+
+  return mapExecutionResult(pistonResponse);
  }
 
- /**
-  * Only published and active problems can be executed by students.
-  */
  private CodingProblem getPublishedProblem(
          Long problemId
  ) {
@@ -168,58 +130,48 @@ public class CodeExecutionServiceImpl
           );
  }
 
- /**
-  * Creates the Judge0 execution request.
-  *
-  * custom runs do not supply expectedOutput because they are not judged
-  * against hidden test cases.
-  */
- private Request buildJudgeRequest(
+ private ExecuteRequest buildPistonRequest(
          CodingProblem problem,
          ProgrammingLanguage language,
          String sourceCode,
          String customInput
  ) {
-  double timeLimitSeconds =
-          resolveTimeLimitSeconds(problem);
+  long runTimeoutMilliseconds =
+          resolveTimeLimitMilliseconds(problem);
 
-  int memoryLimitKilobytes =
-          resolveMemoryLimitKilobytes(problem);
+  long runMemoryLimitBytes =
+          resolveMemoryLimitBytes(problem);
 
-  return new Request(
-          normalizeSourceCode(sourceCode),
-          language.getJudge0LanguageId(),
+  return new ExecuteRequest(
+          language.getPistonLanguage(),
+          language.getPistonVersion(),
+          List.of(
+                  new File(
+                          language.getPistonSourceFileName(),
+                          normalizeSourceCode(sourceCode)
+                  )
+          ),
           normalizeCustomInput(customInput),
-          null,
-          timeLimitSeconds,
-          memoryLimitKilobytes
+          List.of(),
+          DEFAULT_COMPILE_TIMEOUT_MILLISECONDS,
+          runTimeoutMilliseconds,
+          DEFAULT_COMPILE_MEMORY_LIMIT_BYTES,
+          runMemoryLimitBytes
   );
  }
 
- /**
-  * Maps the raw Judge0 response into the application response.
-  */
  private Execution mapExecutionResult(
-         Result result
+         ExecuteResponse response
  ) {
-  try {
-   return new Execution(
-           judge0ResultMapper.status(result),
-           result.stdout(),
-           result.stderr(),
-           result.compileOutput(),
-           judge0ResultMapper.time(result),
-           judge0ResultMapper.memory(result),
-           result.message()
-   );
-
-  } catch (Exception exception) {
-   throw new ResponseStatusException(
-           HttpStatus.BAD_GATEWAY,
-           "Unable to process the Judge0 execution response.",
-           exception
-   );
-  }
+  return new Execution(
+          pistonResultMapper.status(response),
+          pistonResultMapper.stdout(response),
+          pistonResultMapper.stderr(response),
+          pistonResultMapper.compilerOutput(response),
+          pistonResultMapper.timeSeconds(response),
+          pistonResultMapper.memoryKilobytes(response),
+          pistonResultMapper.message(response)
+  );
  }
 
  private void validateRunRequest(
@@ -266,7 +218,7 @@ public class CodeExecutionServiceImpl
          String customInput
  ) {
   validateProblemId(problemId);
-  validateLanguageConfiguration(language);
+  validateLanguage(language);
   validateSourceCode(sourceCode);
   validateCustomInput(customInput);
  }
@@ -274,10 +226,7 @@ public class CodeExecutionServiceImpl
  private void validateProblemId(
          Long problemId
  ) {
-  if (
-          problemId == null
-                  || problemId <= 0
-  ) {
+  if (problemId == null || problemId <= 0) {
    throw new ResponseStatusException(
            HttpStatus.BAD_REQUEST,
            "A valid problem ID is required."
@@ -285,23 +234,37 @@ public class CodeExecutionServiceImpl
   }
  }
 
+ private void validateLanguage(
+         ProgrammingLanguage language
+ ) {
+  if (language == null) {
+   throw new ResponseStatusException(
+           HttpStatus.BAD_REQUEST,
+           "Programming language is required."
+   );
+  }
+
+  if (!language.isPistonConfigured()) {
+   throw new ResponseStatusException(
+           HttpStatus.BAD_REQUEST,
+           "Piston is not configured for language: "
+                   + language
+                   + "."
+   );
+  }
+ }
+
  private void validateSourceCode(
          String sourceCode
  ) {
-  if (
-          sourceCode == null
-                  || sourceCode.isBlank()
-  ) {
+  if (sourceCode == null || sourceCode.isBlank()) {
    throw new ResponseStatusException(
            HttpStatus.BAD_REQUEST,
            "Source code is required."
    );
   }
 
-  if (
-          sourceCode.length()
-                  > MAX_SOURCE_CODE_LENGTH
-  ) {
+  if (sourceCode.length() > MAX_SOURCE_CODE_LENGTH) {
    throw new ResponseStatusException(
            HttpStatus.PAYLOAD_TOO_LARGE,
            "Source code cannot exceed "
@@ -328,81 +291,34 @@ public class CodeExecutionServiceImpl
   }
  }
 
- private void validateLanguageConfiguration(
-         ProgrammingLanguage language
- ) {
-  if (language == null) {
-   throw new ResponseStatusException(
-           HttpStatus.BAD_REQUEST,
-           "Programming language is required."
-   );
-  }
-
-  Integer judge0LanguageId =
-          language.getJudge0LanguageId();
-
-  if (
-          judge0LanguageId == null
-                  || judge0LanguageId <= 0
-  ) {
-   throw new ResponseStatusException(
-           HttpStatus.BAD_REQUEST,
-           "Judge0 is not configured for the selected language: "
-                   + language
-                   + "."
-   );
-  }
- }
-
- /**
-  * Converts the problem time limit from milliseconds to seconds,
-  * because Judge0 expects seconds.
-  */
- private double resolveTimeLimitSeconds(
+ private long resolveTimeLimitMilliseconds(
          CodingProblem problem
  ) {
-  Integer timeLimitMilliseconds =
+  Integer configured =
           problem.getTimeLimitMilliseconds();
 
-  if (
-          timeLimitMilliseconds == null
-                  || timeLimitMilliseconds <= 0
-  ) {
-   return DEFAULT_TIME_LIMIT_SECONDS;
+  if (configured == null || configured <= 0) {
+   return DEFAULT_TIME_LIMIT_MILLISECONDS;
   }
 
-  double timeLimitSeconds =
-          timeLimitMilliseconds / 1000.0;
-
-  /*
-   * Prevent sub-millisecond configuration from becoming 0.
-   */
-  return Math.max(
-          0.001,
-          timeLimitSeconds
-  );
+  return configured.longValue();
  }
 
- /**
-  * Converts the problem memory limit from MB to KB,
-  * because Judge0 expects kilobytes.
-  */
- private int resolveMemoryLimitKilobytes(
+ private long resolveMemoryLimitBytes(
          CodingProblem problem
  ) {
-  Integer memoryLimitMegabytes =
+  Integer configured =
           problem.getMemoryLimitMegabytes();
 
-  int resolvedMemoryMegabytes =
-          memoryLimitMegabytes == null
-                  || memoryLimitMegabytes <= 0
+  int megabytes =
+          configured == null || configured <= 0
                   ? DEFAULT_MEMORY_LIMIT_MEGABYTES
-                  : memoryLimitMegabytes;
+                  : configured;
 
   try {
    return Math.multiplyExact(
-           resolvedMemoryMegabytes,
-           1024
+           megabytes,
+           1024L * 1024L
    );
 
   } catch (ArithmeticException exception) {
@@ -418,52 +334,30 @@ public class CodeExecutionServiceImpl
          String sourceCode
  ) {
   /*
-   * Do not use stripIndent() because indentation can be meaningful
-   * for Python and other indentation-sensitive languages.
+   * Do not call trim(), strip() or stripIndent().
+   * Leading whitespace is meaningful in Python.
    */
-  return sourceCode.trim();
+  return sourceCode;
  }
 
  private String normalizeCustomInput(
          String customInput
  ) {
-  if (customInput == null) {
-   return "";
-  }
-
-  /*
-   * Preserve whitespace and line breaks because custom input is
-   * consumed exactly by the submitted program.
-   */
-  return customInput;
+  return customInput == null
+          ? ""
+          : customInput;
  }
 
  private String resolveExceptionMessage(
          Exception exception
  ) {
-  String message =
-          exception.getMessage();
-
   if (
-          message != null
-                  && !message.isBlank()
+          exception.getMessage() != null
+                  && !exception.getMessage().isBlank()
   ) {
-   return message;
+   return exception.getMessage();
   }
 
-  Throwable cause =
-          exception.getCause();
-
-  if (
-          cause != null
-                  && cause.getMessage() != null
-                  && !cause.getMessage().isBlank()
-  ) {
-   return cause.getMessage();
-  }
-
-  return exception
-          .getClass()
-          .getSimpleName();
+  return exception.getClass().getSimpleName();
  }
 }

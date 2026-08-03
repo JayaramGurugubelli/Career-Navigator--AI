@@ -1,0 +1,17 @@
+career_Navigator_parent:
+  payment:
+    default-provider: RAZORPAY
+    default-currency: INR
+    pending-payment-ttl: 30m
+    reconciliation-age: 15m
+
+    razorpay:
+      enabled: true
+      key-id: ${RAZORPAY_KEY_ID}
+      key-secret: ${RAZORPAY_KEY_SECRET}
+      webhook-secret: ${RAZORPAY_WEBHOOK_SECRET}
+
+    jobs:
+      subscription-expiry-cron: "0 10 * * * *"
+      webhook-retry-delay-ms: 60000
+      reconciliation-delay-ms: 300000

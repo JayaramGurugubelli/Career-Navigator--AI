@@ -1,5 +1,7 @@
 coding:
-  judge0:
-    base-url: http://localhost:2358
-    polling-attempts: 20
-    polling-delay-milliseconds: 500
+  piston:
+    base-url: ${PISTON_BASE_URL:http://localhost:2000}
+    execute-path: /api/v2/execute
+    connect-timeout-milliseconds: 5000
+    read-timeout-milliseconds: 30000
+    maximum-output-characters: 100000

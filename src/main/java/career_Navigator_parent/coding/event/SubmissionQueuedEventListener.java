@@ -13,8 +13,7 @@ import org.springframework.transaction.event.TransactionalEventListener;
 @RequiredArgsConstructor
 public class SubmissionQueuedEventListener {
 
-    private final SubmissionJudgingService
-            submissionJudgingService;
+    private final SubmissionJudgingService submissionJudgingService;
 
     @Async("submissionExecutor")
     @TransactionalEventListener(
@@ -23,21 +22,75 @@ public class SubmissionQueuedEventListener {
     public void handle(
             SubmissionQueuedEvent event
     ) {
+        Long submissionId =
+                event.submissionId();
+
+        log.info(
+                "Submission evaluation started. submissionId={}",
+                submissionId
+        );
+
         try {
             submissionJudgingService.judge(
-                    event.submissionId()
+                    submissionId
             );
+
+            log.info(
+                    "Submission evaluation completed. submissionId={}",
+                    submissionId
+            );
+
         } catch (Exception exception) {
+
+            String errorMessage =
+                    resolveErrorMessage(exception);
+
             log.error(
-                    "Failed to judge submission ID: {}",
-                    event.submissionId(),
+                    "Submission evaluation failed. submissionId={}, error={}",
+                    submissionId,
+                    errorMessage,
                     exception
             );
 
-            submissionJudgingService.markAsFailed(
-                    event.submissionId(),
-                    exception.getMessage()
-            );
+            try {
+                submissionJudgingService.markAsFailed(
+                        submissionId,
+                        errorMessage
+                );
+
+            } catch (Exception markingException) {
+                log.error(
+                        "Unable to mark submission as failed. submissionId={}",
+                        submissionId,
+                        markingException
+                );
+            }
         }
+    }
+
+    private String resolveErrorMessage(
+            Exception exception
+    ) {
+        if (
+                exception.getMessage() != null
+                        && !exception.getMessage().isBlank()
+        ) {
+            return exception.getMessage();
+        }
+
+        Throwable cause =
+                exception.getCause();
+
+        if (
+                cause != null
+                        && cause.getMessage() != null
+                        && !cause.getMessage().isBlank()
+        ) {
+            return cause.getMessage();
+        }
+
+        return exception
+                .getClass()
+                .getSimpleName();
     }
 }

@@ -10,13 +10,15 @@ import career_Navigator_parent.coding.entity.ProblemTestCase;
 import career_Navigator_parent.coding.entity.SubmissionTestCaseResult;
 import career_Navigator_parent.coding.enums.ProblemAttemptStatus;
 import career_Navigator_parent.coding.enums.ProblemStatus;
+import career_Navigator_parent.coding.enums.ProgrammingLanguage;
 import career_Navigator_parent.coding.enums.SubmissionStatus;
 import career_Navigator_parent.coding.enums.TestCaseVisibility;
 import career_Navigator_parent.coding.event.SubmissionQueuedEvent;
-import career_Navigator_parent.coding.execution.client.Judge0Client;
-import career_Navigator_parent.coding.execution.dto.Judge0Models.Request;
-import career_Navigator_parent.coding.execution.dto.Judge0Models.Result;
-import career_Navigator_parent.coding.execution.mapper.Judge0ResultMapper;
+import career_Navigator_parent.coding.execution.client.PistonClient;
+import career_Navigator_parent.coding.execution.dto.PistonModels.ExecuteRequest;
+import career_Navigator_parent.coding.execution.dto.PistonModels.ExecuteResponse;
+import career_Navigator_parent.coding.execution.dto.PistonModels.File;
+import career_Navigator_parent.coding.execution.mapper.PistonResultMapper;
 import career_Navigator_parent.coding.repository.CodeSubmissionRepository;
 import career_Navigator_parent.coding.repository.CodingProblemRepository;
 import career_Navigator_parent.coding.repository.ProblemAttemptRepository;
@@ -47,38 +49,27 @@ import java.util.List;
 public class SubmissionJudgingServiceImpl
         implements SubmissionJudgingService {
 
- private static final int MAX_SOURCE_CODE_LENGTH =
-         200_000;
+ private static final int MAX_SOURCE_CODE_LENGTH = 200_000;
+ private static final int MAX_SUBMISSION_PAGE_SIZE = 100;
+ private static final int MAX_ERROR_MESSAGE_LENGTH = 2_000;
 
- private static final int MAX_SUBMISSION_PAGE_SIZE =
-         100;
 
- private static final int MAX_ERROR_MESSAGE_LENGTH =
-         2_000;
+    private static final long DEFAULT_COMPILE_TIMEOUT_MILLISECONDS =
+            10_000L;
+ private static final long DEFAULT_COMPILE_MEMORY_LIMIT_BYTES =
+         512L * 1024L * 1024L;
 
- private final CodingProblemRepository
-         codingProblemRepository;
+ private final PistonClient pistonClient;
+ private final PistonResultMapper pistonResultMapper;
 
- private final CodeSubmissionRepository
-         codeSubmissionRepository;
+ private final CodingProblemRepository codingProblemRepository;
+ private final CodeSubmissionRepository codeSubmissionRepository;
+ private final ProblemAttemptRepository problemAttemptRepository;
 
- private final ProblemAttemptRepository
-         problemAttemptRepository;
+ private final StudentRepository studentRepository;
+ private final SecurityUtils securityUtils;
 
- private final StudentRepository
-         studentRepository;
-
- private final SecurityUtils
-         securityUtils;
-
- private final Judge0Client
-         judge0Client;
-
- private final Judge0ResultMapper
-         judge0ResultMapper;
-
- private final ApplicationEventPublisher
-         eventPublisher;
+ private final ApplicationEventPublisher eventPublisher;
 
  @Override
  public Submission submit(
@@ -112,9 +103,6 @@ public class SubmissionJudgingServiceImpl
    );
   }
 
-  LocalDateTime now =
-          LocalDateTime.now();
-
   CodeSubmission submission =
           CodeSubmission.builder()
                   .student(student)
@@ -122,8 +110,12 @@ public class SubmissionJudgingServiceImpl
                   .programmingLanguage(
                           request.language()
                   )
+                  /*
+                   * Do not strip source code.
+                   * Leading whitespace is meaningful for Python.
+                   */
                   .sourceCode(
-                          request.sourceCode().strip()
+                          request.sourceCode()
                   )
                   .status(
                           SubmissionStatus.QUEUED
@@ -132,13 +124,14 @@ public class SubmissionJudgingServiceImpl
                   .totalTestCases(
                           activeTestCases.size()
                   )
-                  .submittedAt(now)
+                  .submittedAt(
+                          LocalDateTime.now()
+                  )
                   .build();
 
   CodeSubmission savedSubmission =
-          codeSubmissionRepository.saveAndFlush(
-                  submission
-          );
+          codeSubmissionRepository
+                  .saveAndFlush(submission);
 
   recordQueuedAttempt(
           student,
@@ -146,10 +139,8 @@ public class SubmissionJudgingServiceImpl
   );
 
   /*
-   * Publish only after the submission transaction commits.
-   *
-   * This prevents the background listener from trying to read
-   * a submission that has not yet been committed.
+   * Publish only after transaction commit so the asynchronous
+   * listener can safely load the saved submission.
    */
   publishSubmissionQueuedAfterCommit(
           savedSubmission.getId()
@@ -235,8 +226,9 @@ public class SubmissionJudgingServiceImpl
   validateSubmissionId(submissionId);
 
   /*
-   * Pessimistic locking prevents two async workers from
-   * claiming and judging the same submission simultaneously.
+   * The repository method should use a pessimistic write lock.
+   * This prevents multiple async workers from judging the same
+   * submission simultaneously.
    */
   CodeSubmission submission =
           codeSubmissionRepository
@@ -253,8 +245,7 @@ public class SubmissionJudgingServiceImpl
   }
 
   if (
-          submission.getStatus()
-                  != SubmissionStatus.QUEUED
+          submission.getStatus() != SubmissionStatus.QUEUED
                   && submission.getStatus()
                   != SubmissionStatus.PROCESSING
   ) {
@@ -265,9 +256,8 @@ public class SubmissionJudgingServiceImpl
           SubmissionStatus.PROCESSING
   );
 
-  codeSubmissionRepository.saveAndFlush(
-          submission
-  );
+  codeSubmissionRepository
+          .saveAndFlush(submission);
 
   CodingProblem problem =
           submission.getProblem();
@@ -298,45 +288,62 @@ public class SubmissionJudgingServiceImpl
           SubmissionStatus.ACCEPTED;
 
   for (ProblemTestCase testCase : testCases) {
-   Request judgeRequest =
-           buildJudgeRequest(
+   ExecuteRequest pistonRequest =
+           buildPistonRequest(
                    submission,
                    problem,
                    testCase
            );
 
-   Result judgeResult;
+   ExecuteResponse pistonResponse;
 
    try {
-    judgeResult =
-            judge0Client.execute(
-                    judgeRequest
+    pistonResponse =
+            pistonClient.execute(
+                    pistonRequest
             );
 
    } catch (Exception exception) {
     completeAsFailed(
             submission,
-            exception.getMessage()
+            normalizeErrorMessage(
+                    resolveExceptionMessage(
+                            exception
+                    )
+            )
     );
 
     return;
    }
 
-   SubmissionStatus testStatus =
-           judge0ResultMapper.status(
-                   judgeResult
+   SubmissionStatus providerStatus =
+           pistonResultMapper.status(
+                   pistonResponse
            );
 
-   if (testStatus == null) {
-    testStatus =
-            SubmissionStatus.INTERNAL_ERROR;
-   }
+   String actualOutput =
+           normalizeOutput(
+                   pistonResultMapper.stdout(
+                           pistonResponse
+                   )
+           );
+
+   String expectedOutput =
+           normalizeOutput(
+                   testCase.getExpectedOutput()
+           );
+
+   SubmissionStatus testStatus =
+           resolveTestStatus(
+                   providerStatus,
+                   actualOutput,
+                   expectedOutput
+           );
 
    boolean passed =
-           testStatus
-                   == SubmissionStatus.ACCEPTED;
+           testStatus == SubmissionStatus.ACCEPTED;
 
-   Double testCaseScore =
+   double testCaseScore =
            resolveScoreWeight(testCase);
 
    double scoreAwarded =
@@ -356,13 +363,13 @@ public class SubmissionJudgingServiceImpl
    }
 
    Double executionTime =
-           judge0ResultMapper.time(
-                   judgeResult
+           pistonResultMapper.timeSeconds(
+                   pistonResponse
            );
 
    Long memoryUsed =
-           judge0ResultMapper.memory(
-                   judgeResult
+           pistonResultMapper.memoryKilobytes(
+                   pistonResponse
            );
 
    if (
@@ -393,22 +400,22 @@ public class SubmissionJudgingServiceImpl
                    .testCase(testCase)
                    .status(testStatus)
                    .passed(passed)
-                   .actualOutput(
-                           normalizeOutput(
-                                   judgeResult.stdout()
-                           )
-                   )
+                   .actualOutput(actualOutput)
                    .expectedOutput(
                            testCase.getExpectedOutput()
                    )
                    .standardError(
                            normalizeOutput(
-                                   judgeResult.stderr()
+                                   pistonResultMapper.stderr(
+                                           pistonResponse
+                                   )
                            )
                    )
                    .compilerOutput(
                            normalizeOutput(
-                                   judgeResult.compileOutput()
+                                   pistonResultMapper.compilerOutput(
+                                           pistonResponse
+                                   )
                            )
                    )
                    .executionTimeSeconds(
@@ -432,7 +439,9 @@ public class SubmissionJudgingServiceImpl
    ) {
     submission.setCompilerOutput(
             normalizeOutput(
-                    judgeResult.compileOutput()
+                    pistonResultMapper.compilerOutput(
+                            pistonResponse
+                    )
             )
     );
 
@@ -442,10 +451,21 @@ public class SubmissionJudgingServiceImpl
    if (
            testStatus
                    == SubmissionStatus.RUNTIME_ERROR
+                   || testStatus
+                   == SubmissionStatus.TIME_LIMIT_EXCEEDED
+                   || testStatus
+                   == SubmissionStatus.MEMORY_LIMIT_EXCEEDED
    ) {
     submission.setRuntimeError(
             normalizeOutput(
-                    judgeResult.stderr()
+                    firstNonBlank(
+                            pistonResultMapper.stderr(
+                                    pistonResponse
+                            ),
+                            pistonResultMapper.message(
+                                    pistonResponse
+                            )
+                    )
             )
     );
    }
@@ -456,7 +476,9 @@ public class SubmissionJudgingServiceImpl
    ) {
     submission.setRuntimeError(
             normalizeOutput(
-                    judgeResult.message()
+                    pistonResultMapper.message(
+                            pistonResponse
+                    )
             )
     );
 
@@ -495,18 +517,9 @@ public class SubmissionJudgingServiceImpl
           LocalDateTime.now()
   );
 
-  /*
-   * Enable this when CodeSubmission contains:
-   *
-   * private Double scoreAwarded;
-   *
-   * submission.setScoreAwarded(awardedScore);
-   */
-
   CodeSubmission savedSubmission =
-          codeSubmissionRepository.saveAndFlush(
-                  submission
-          );
+          codeSubmissionRepository
+                  .saveAndFlush(submission);
 
   updateProblemStatistics(
           problem,
@@ -548,6 +561,172 @@ public class SubmissionJudgingServiceImpl
   );
  }
 
+ private ExecuteRequest buildPistonRequest(
+         CodeSubmission submission,
+         CodingProblem problem,
+         ProblemTestCase testCase
+ ) {
+  ProgrammingLanguage language =
+          submission.getProgrammingLanguage();
+
+  if (
+          language == null
+                  || !language.isPistonConfigured()
+  ) {
+   throw new ResponseStatusException(
+           HttpStatus.BAD_REQUEST,
+           "Piston is not configured for the submission language."
+   );
+  }
+
+  long runTimeoutMilliseconds =
+          resolveRunTimeoutMilliseconds(
+                  problem,
+                  testCase
+          );
+
+  long runMemoryLimitBytes =
+          resolveRunMemoryLimitBytes(
+                  problem,
+                  testCase
+          );
+
+  return new ExecuteRequest(
+          language.getPistonLanguage(),
+          language.getPistonVersion(),
+          List.of(
+                  new File(
+                          language.getPistonSourceFileName(),
+                          submission.getSourceCode()
+                  )
+          ),
+          testCase.getInput() == null
+                  ? ""
+                  : testCase.getInput(),
+          List.of(),
+          DEFAULT_COMPILE_TIMEOUT_MILLISECONDS,
+          runTimeoutMilliseconds,
+          DEFAULT_COMPILE_MEMORY_LIMIT_BYTES,
+          runMemoryLimitBytes
+  );
+ }
+
+ private long resolveRunTimeoutMilliseconds(
+         CodingProblem problem,
+         ProblemTestCase testCase
+ ) {
+  Double customTimeLimitSeconds =
+          testCase.getCustomTimeLimitSeconds();
+
+  if (
+          customTimeLimitSeconds != null
+                  && customTimeLimitSeconds > 0
+  ) {
+   return Math.max(
+           1L,
+           Math.round(
+                   customTimeLimitSeconds * 1_000.0
+           )
+   );
+  }
+
+  Integer problemTimeLimitMilliseconds =
+          problem.getTimeLimitMilliseconds();
+
+  if (
+          problemTimeLimitMilliseconds == null
+                  || problemTimeLimitMilliseconds <= 0
+  ) {
+   throw new ResponseStatusException(
+           HttpStatus.CONFLICT,
+           "The problem has an invalid time limit."
+   );
+  }
+
+  return problemTimeLimitMilliseconds.longValue();
+ }
+
+ private long resolveRunMemoryLimitBytes(
+         CodingProblem problem,
+         ProblemTestCase testCase
+ ) {
+  Integer memoryLimitMegabytes =
+          testCase.getCustomMemoryLimitMegabytes() != null
+                  ? testCase.getCustomMemoryLimitMegabytes()
+                  : problem.getMemoryLimitMegabytes();
+
+  if (
+          memoryLimitMegabytes == null
+                  || memoryLimitMegabytes <= 0
+  ) {
+   throw new ResponseStatusException(
+           HttpStatus.CONFLICT,
+           "The problem has an invalid memory limit."
+   );
+  }
+
+  try {
+   return Math.multiplyExact(
+           memoryLimitMegabytes.longValue(),
+           1024L * 1024L
+   );
+
+  } catch (ArithmeticException exception) {
+   throw new ResponseStatusException(
+           HttpStatus.BAD_REQUEST,
+           "Configured memory limit is too large.",
+           exception
+   );
+  }
+ }
+
+ private SubmissionStatus resolveTestStatus(
+         SubmissionStatus providerStatus,
+         String actualOutput,
+         String expectedOutput
+ ) {
+  if (
+          providerStatus
+                  != SubmissionStatus.ACCEPTED
+  ) {
+   return providerStatus == null
+           ? SubmissionStatus.INTERNAL_ERROR
+           : providerStatus;
+  }
+
+  return outputsMatch(
+          actualOutput,
+          expectedOutput
+  )
+          ? SubmissionStatus.ACCEPTED
+          : SubmissionStatus.WRONG_ANSWER;
+ }
+
+ private boolean outputsMatch(
+         String actualOutput,
+         String expectedOutput
+ ) {
+  return normalizeForComparison(actualOutput)
+          .equals(
+                  normalizeForComparison(
+                          expectedOutput
+                  )
+          );
+ }
+
+ private String normalizeForComparison(
+         String output
+ ) {
+  if (output == null) {
+   return "";
+  }
+
+  return output
+          .replace("\r\n", "\n")
+          .replace('\r', '\n')
+          .stripTrailing();
+ }
+
  private void completeAsFailed(
          CodeSubmission submission,
          String errorMessage
@@ -565,9 +744,8 @@ public class SubmissionJudgingServiceImpl
   );
 
   CodeSubmission savedSubmission =
-          codeSubmissionRepository.saveAndFlush(
-                  submission
-          );
+          codeSubmissionRepository
+                  .saveAndFlush(submission);
 
   updateProblemStatistics(
           savedSubmission.getProblem(),
@@ -586,9 +764,6 @@ public class SubmissionJudgingServiceImpl
          Student student,
          CodingProblem problem
  ) {
-  /*
-   * An attempt row is unique per student and problem.
-   */
   ProblemAttempt attempt =
           problemAttemptRepository
                   .findForUpdate(
@@ -616,16 +791,11 @@ public class SubmissionJudgingServiceImpl
   attempt.recordQueuedSubmission();
 
   try {
-   problemAttemptRepository.saveAndFlush(
-           attempt
-   );
+   problemAttemptRepository
+           .saveAndFlush(attempt);
 
   } catch (DataIntegrityViolationException exception) {
-   /*
-    * Handles two first submissions for the same problem
-    * arriving concurrently.
-    */
-   ProblemAttempt existing =
+   ProblemAttempt existingAttempt =
            problemAttemptRepository
                    .findForUpdate(
                            student.getId(),
@@ -633,11 +803,10 @@ public class SubmissionJudgingServiceImpl
                    )
                    .orElseThrow(() -> exception);
 
-   existing.recordQueuedSubmission();
+   existingAttempt.recordQueuedSubmission();
 
-   problemAttemptRepository.save(
-           existing
-   );
+   problemAttemptRepository
+           .save(existingAttempt);
   }
  }
 
@@ -670,9 +839,6 @@ public class SubmissionJudgingServiceImpl
                                   .build()
                   );
 
-  /*
-   * Exactly one increment per terminal submission.
-   */
   attempt.recordCompletedAttempt();
 
   if (
@@ -698,98 +864,10 @@ public class SubmissionJudgingServiceImpl
    );
 
   } else {
-   /*
-    * A failed attempt cannot turn an already solved
-    * problem back into ATTEMPTED.
-    */
    attempt.preserveSolvedStatusOrMarkAttempted();
   }
 
-  problemAttemptRepository.save(
-          attempt
-  );
- }
-
- private Request buildJudgeRequest(
-         CodeSubmission submission,
-         CodingProblem problem,
-         ProblemTestCase testCase
- ) {
-  if (
-          submission.getProgrammingLanguage() == null
-                  || submission
-                  .getProgrammingLanguage()
-                  .getJudge0LanguageId() == null
-  ) {
-   throw new ResponseStatusException(
-           HttpStatus.BAD_REQUEST,
-           "Judge0 is not configured for the submission language."
-   );
-  }
-
-  if (
-          problem.getTimeLimitMilliseconds() == null
-                  || problem.getTimeLimitMilliseconds() <= 0
-  ) {
-   throw new ResponseStatusException(
-           HttpStatus.CONFLICT,
-           "The problem has an invalid time limit."
-   );
-  }
-
-  if (
-          problem.getMemoryLimitMegabytes() == null
-                  || problem.getMemoryLimitMegabytes() <= 0
-  ) {
-   throw new ResponseStatusException(
-           HttpStatus.CONFLICT,
-           "The problem has an invalid memory limit."
-   );
-  }
-
-  double timeLimitSeconds =
-          testCase.getCustomTimeLimitSeconds()
-                  != null
-                  ? testCase
-                  .getCustomTimeLimitSeconds()
-                  : problem
-                  .getTimeLimitMilliseconds()
-                  / 1000.0;
-
-  int memoryLimitMegabytes =
-          testCase.getCustomMemoryLimitMegabytes()
-                  != null
-                  ? testCase
-                  .getCustomMemoryLimitMegabytes()
-                  : problem
-                  .getMemoryLimitMegabytes();
-
-  int memoryLimitKilobytes;
-
-  try {
-   memoryLimitKilobytes =
-           Math.multiplyExact(
-                   memoryLimitMegabytes,
-                   1024
-           );
-
-  } catch (ArithmeticException exception) {
-   throw new ResponseStatusException(
-           HttpStatus.BAD_REQUEST,
-           "Configured memory limit is too large."
-   );
-  }
-
-  return new Request(
-          submission.getSourceCode(),
-          submission
-                  .getProgrammingLanguage()
-                  .getJudge0LanguageId(),
-          testCase.getInput(),
-          testCase.getExpectedOutput(),
-          timeLimitSeconds,
-          memoryLimitKilobytes
-  );
+  problemAttemptRepository.save(attempt);
  }
 
  private List<ProblemTestCase> getActiveTestCases(
@@ -836,6 +914,7 @@ public class SubmissionJudgingServiceImpl
 
   submission.setCompilerOutput(null);
   submission.setRuntimeError(null);
+  submission.setStandardOutput(null);
  }
 
  private void validateSubmissionRequest(
@@ -865,13 +944,10 @@ public class SubmissionJudgingServiceImpl
    );
   }
 
-  if (
-          request.language()
-                  .getJudge0LanguageId() == null
-  ) {
+  if (!request.language().isPistonConfigured()) {
    throw new ResponseStatusException(
            HttpStatus.BAD_REQUEST,
-           "Judge0 is not configured for the selected language."
+           "Piston is not configured for the selected language."
    );
   }
 
@@ -912,17 +988,20 @@ public class SubmissionJudgingServiceImpl
   }
  }
 
- private Double resolveScoreWeight(
+ private double resolveScoreWeight(
          ProblemTestCase testCase
  ) {
+  Double scoreWeight =
+          testCase.getScoreWeight();
+
   if (
-          testCase.getScoreWeight() == null
-                  || testCase.getScoreWeight() < 0
+          scoreWeight == null
+                  || scoreWeight < 0
   ) {
    return 0.0;
   }
 
-  return testCase.getScoreWeight();
+  return scoreWeight;
  }
 
  private void updateProblemStatistics(
@@ -934,27 +1013,36 @@ public class SubmissionJudgingServiceImpl
                   ? 0L
                   : problem.getTotalSubmissions();
 
-  problem.setTotalSubmissions(
-          Math.addExact(
-                  totalSubmissions,
-                  1L
-          )
-  );
-
-  if (
-          submissionStatus
-                  == SubmissionStatus.ACCEPTED
-  ) {
-   long acceptedSubmissions =
-           problem.getAcceptedSubmissions() == null
-                   ? 0L
-                   : problem.getAcceptedSubmissions();
-
-   problem.setAcceptedSubmissions(
+  try {
+   problem.setTotalSubmissions(
            Math.addExact(
-                   acceptedSubmissions,
+                   totalSubmissions,
                    1L
            )
+   );
+
+   if (
+           submissionStatus
+                   == SubmissionStatus.ACCEPTED
+   ) {
+    long acceptedSubmissions =
+            problem.getAcceptedSubmissions() == null
+                    ? 0L
+                    : problem.getAcceptedSubmissions();
+
+    problem.setAcceptedSubmissions(
+            Math.addExact(
+                    acceptedSubmissions,
+                    1L
+            )
+    );
+   }
+
+  } catch (ArithmeticException exception) {
+   throw new ResponseStatusException(
+           HttpStatus.INTERNAL_SERVER_ERROR,
+           "Coding problem submission statistics overflowed.",
+           exception
    );
   }
 
@@ -965,9 +1053,6 @@ public class SubmissionJudgingServiceImpl
          CodeSubmission submission,
          double awardedScore
  ) {
-  /*
-   * Prefer weighted score when test cases have score weights.
-   */
   if (awardedScore > 0) {
    return (int) Math.min(
            100,
@@ -985,13 +1070,13 @@ public class SubmissionJudgingServiceImpl
            : 0;
   }
 
-  int passed =
+  int passedTestCases =
           submission.getPassedTestCases() == null
                   ? 0
                   : submission.getPassedTestCases();
 
   double score =
-          passed * 100.0
+          passedTestCases * 100.0
                   / submission.getTotalTestCases();
 
   return (int) Math.round(score);
@@ -1042,10 +1127,6 @@ public class SubmissionJudgingServiceImpl
                   MAX_SUBMISSION_PAGE_SIZE
           );
 
-  /*
-   * Sorting is defined in the repository method:
-   * OrderBySubmittedAtDesc.
-   */
   return PageRequest.of(
           pageNumber,
           pageSize
@@ -1087,6 +1168,7 @@ public class SubmissionJudgingServiceImpl
    TransactionSynchronizationManager
            .registerSynchronization(
                    new TransactionSynchronization() {
+
                     @Override
                     public void afterCommit() {
                      eventPublisher.publishEvent(
@@ -1108,9 +1190,7 @@ public class SubmissionJudgingServiceImpl
   );
  }
 
- private Submission toResponse(
-         CodeSubmission submission
- ) {
+ private Submission toResponse(CodeSubmission submission) {
   List<TestResult> testResults;
 
   if (submission.getTestCaseResults() == null) {
@@ -1136,23 +1216,22 @@ public class SubmissionJudgingServiceImpl
                    .toList();
   }
 
-  return new Submission(
-          submission.getId(),
-          submission.getProblem().getId(),
-          submission.getProgrammingLanguage(),
-          submission.getStatus(),
-          submission.getPassedTestCases(),
-          submission.getTotalTestCases(),
-          submission.getExecutionTimeSeconds(),
-          submission.getMemoryUsedKilobytes(),
-          submission.getCompilerOutput(),
-          submission.getRuntimeError(),
-          submission.getStatus()
-                  == SubmissionStatus.ACCEPTED,
-          submission.getSubmittedAt(),
-          submission.getJudgedAt(),
-          testResults
-  );
+     return new Submission(
+             submission.getId(),
+             submission.getProblem().getId(),
+             submission.getProgrammingLanguage(),
+             submission.getStatus(),
+             submission.getPassedTestCases(),
+             submission.getTotalTestCases(),
+             submission.getExecutionTimeSeconds(),
+             submission.getMemoryUsedKilobytes(),
+             submission.getCompilerOutput(),
+             submission.getRuntimeError(),
+             isTerminalStatus(submission.getStatus()),
+             submission.getSubmittedAt(),
+             submission.getJudgedAt(),
+             testResults
+     );
  }
 
  private TestResult toTestResult(
@@ -1212,7 +1291,10 @@ public class SubmissionJudgingServiceImpl
   }
 
   String normalized =
-          output.stripTrailing();
+          output
+                  .replace("\r\n", "\n")
+                  .replace('\r', '\n')
+                  .stripTrailing();
 
   return normalized.isEmpty()
           ? null
@@ -1239,5 +1321,50 @@ public class SubmissionJudgingServiceImpl
           0,
           MAX_ERROR_MESSAGE_LENGTH
   );
+ }
+
+ private String resolveExceptionMessage(
+         Exception exception
+ ) {
+  if (
+          exception.getMessage() != null
+                  && !exception.getMessage().isBlank()
+  ) {
+   return exception.getMessage();
+  }
+
+  Throwable cause =
+          exception.getCause();
+
+  if (
+          cause != null
+                  && cause.getMessage() != null
+                  && !cause.getMessage().isBlank()
+  ) {
+   return cause.getMessage();
+  }
+
+  return exception
+          .getClass()
+          .getSimpleName();
+ }
+
+ private String firstNonBlank(
+         String... values
+ ) {
+  if (values == null) {
+   return null;
+  }
+
+  for (String value : values) {
+   if (
+           value != null
+                   && !value.isBlank()
+   ) {
+    return value;
+   }
+  }
+
+  return null;
  }
 }

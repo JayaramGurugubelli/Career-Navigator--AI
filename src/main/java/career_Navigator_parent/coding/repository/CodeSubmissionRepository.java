@@ -17,12 +17,6 @@ import java.util.Optional;
 public interface CodeSubmissionRepository
         extends JpaRepository<CodeSubmission, Long> {
 
-    /*
-     * Ownership-safe fetch for student submission details.
-     *
-     * EntityGraph loads the problem and test-case results before
-     * the read-only transaction closes.
-     */
     @EntityGraph(attributePaths = {
             "problem",
             "testCaseResults",
@@ -33,9 +27,6 @@ public interface CodeSubmissionRepository
             Long studentId
     );
 
-    /*
-     * Student submission history, newest first.
-     */
     @EntityGraph(attributePaths = {
             "problem"
     })
@@ -44,9 +35,6 @@ public interface CodeSubmissionRepository
             Pageable pageable
     );
 
-    /*
-     * Student submission history for a particular problem.
-     */
     @EntityGraph(attributePaths = {
             "problem"
     })
@@ -57,9 +45,6 @@ public interface CodeSubmissionRepository
             Pageable pageable
     );
 
-    /*
-     * Generic methods retained because other services may use them.
-     */
     Page<CodeSubmission> findByStudentId(
             Long studentId,
             Pageable pageable
@@ -71,7 +56,9 @@ public interface CodeSubmissionRepository
             Pageable pageable
     );
 
-    long countByStudentId(Long studentId);
+    long countByStudentId(
+            Long studentId
+    );
 
     long countByStudentIdAndStatus(
             Long studentId,
@@ -79,16 +66,14 @@ public interface CodeSubmissionRepository
     );
 
     /*
-     * Prevents two workers from evaluating the same submission
-     * concurrently.
+     * Do not fetch problem.testCases and testCaseResults together here.
+     * Both collections remain accessible inside the transactional
+     * judging method through lazy loading.
      */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @EntityGraph(attributePaths = {
             "student",
-            "problem",
-            "problem.testCases",
-            "testCaseResults",
-            "testCaseResults.testCase"
+            "problem"
     })
     @Query("""
             select submission
